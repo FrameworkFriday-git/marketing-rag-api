@@ -1,29 +1,27 @@
-# Core FastAPI stack
-fastapi>=0.116.1
-uvicorn>=0.35.0
-gunicorn>=23.0.0
-python-multipart>=0.0.20
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+python-multipart==0.0.6
 
-# Database and API clients
-supabase>=1.0.3
-openai>=1.3.0
-httpx>=0.23.3
+# Database and API clients (fixed versions)
+supabase==2.0.2
+openai==1.3.0
+httpx>=0.24.0
 
 # Configuration
-python-dotenv>=1.0.0
-pydantic>=2.11.7
+python-dotenv==1.0.0
+pydantic==2.5.0
 
-# ML libraries (current versions)
-sentence-transformers>=5.1.0
-scikit-learn>=1.7.1
-torch>=2.8.0
-numpy>=2.3.2
+# ML libraries (will install properly on Linux)
+sentence-transformers==2.2.2
+scikit-learn==1.3.2
+numpy==1.24.3
 
 # Document processing
-python-docx>=1.1.0
-openpyxl>=3.1.2
-python-dateutil>=2.9.0
+python-docx==0.8.11
+openpyxl==3.1.2
+python-dateutil==2.8.2
 
 # Essential dependencies
-requests>=2.31.0
-typing-extensions>=4.14.1
+requests==2.31.0
+typing-extensions==4.8.0
