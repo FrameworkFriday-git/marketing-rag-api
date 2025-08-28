@@ -46,19 +46,12 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Update the CORS middleware in main.py
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://*.lovable.dev",
-        "https://*.vercel.app",
-    ] if os.getenv("ENVIRONMENT") == "development" else [
-        "https://*.lovable.dev",
-        "https://*.vercel.app",
-    ],
+    allow_origins=["*"],  # Allow all origins for now
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
