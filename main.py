@@ -1,8 +1,9 @@
-# main.py - Complete Enhanced FastAPI Application with AI-Powered BigQuery Integration
+# main.py - Complete Enhanced FastAPI Application with Claude-Style BigQuery Integration
 import os
 import logging
 import time
 import json
+import re
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,8 +80,8 @@ except ImportError as e:
 # Initialize FastAPI
 app = FastAPI(
     title="Marketing Intelligence API",
-    description="Production RAG system with AI-powered BigQuery integration",
-    version="2.1.0",
+    description="Production RAG system with Claude-style BigQuery integration",
+    version="2.2.0",
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
 
@@ -228,6 +229,127 @@ Generate ONLY the SQL query, no explanations or markdown:"""
         LIMIT 20
         """
 
+async def extract_campaign_metrics(result: dict) -> list:
+    """Extract structured campaign metrics from BigQuery results"""
+    campaigns = []
+    
+    try:
+        for item in result.get('content', []):
+            if isinstance(item, dict) and 'text' in item:
+                text_data = item['text']
+                
+                # Try to parse JSON-like data
+                if '{' in text_data and '}' in text_data:
+                    # Extract key metrics using regex
+                    metrics = {}
+                    
+                    # Extract common metrics
+                    patterns = {
+                        'conversion_rate': r'"avg_conversion_rate_percent":([0-9.]+)',
+                        'cpc': r'"avg_cpc_dollars":([0-9.]+)',
+                        'ctr': r'"avg_ctr_percent":([0-9.]+)',
+                        'roas': r'"avg_roas":([0-9.]+)',
+                        'cost': r'"total_cost_dollars":([0-9.]+)',
+                        'clicks': r'"total_clicks":([0-9]+)',
+                        'conversions': r'"total_conversions":([0-9.]+)',
+                        'campaign_name': r'"campaign_name":"([^"]+)"'
+                    }
+                    
+                    for metric, pattern in patterns.items():
+                        match = re.search(pattern, text_data)
+                        if match:
+                            metrics[metric] = match.group(1)
+                    
+                    if metrics:
+                        campaigns.append(metrics)
+        
+        return campaigns
+        
+    except Exception as e:
+        logger.error(f"Metrics extraction error: {e}")
+        return []
+
+async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
+    """Format BigQuery results with Claude-style intelligent analysis"""
+    
+    if not openai_client:
+        return f"Here are the BigQuery results for: {question}"
+    
+    try:
+        if not result.get('content'):
+            return f"No data found for: {question}"
+        
+        # Extract and structure the raw data
+        raw_data = []
+        for item in result['content']:
+            if isinstance(item, dict) and 'text' in item:
+                raw_data.append(item['text'])
+        
+        # Combine all raw data for analysis
+        data_text = '\n'.join(raw_data)
+        
+        # Create a comprehensive prompt for Claude-style analysis
+        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery campaign performance data and provide insights like Claude would.
+
+ORIGINAL QUESTION: {question}
+
+RAW DATA FROM BIGQUERY:
+{data_text}
+
+SQL QUERY USED:
+{sql_query}
+
+INSTRUCTIONS:
+1. Parse the JSON-like data structure and extract key metrics
+2. Identify top performing campaigns by relevant metrics (ROAS, conversions, cost efficiency)
+3. Provide actionable insights about campaign performance
+4. Highlight trends, patterns, and recommendations
+5. Format the response conversationally, not as raw data
+6. Include specific numbers and percentages where relevant
+7. Group findings by account/property if multiple are present
+8. Provide a summary with key takeaways
+
+RESPONSE FORMAT:
+- Start with a summary statement
+- Break down performance by account/property if applicable
+- List top performing campaigns with specific metrics
+- Include key insights and patterns
+- End with actionable recommendations
+
+Make this sound like an expert analyst explaining the data, not just displaying raw numbers."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            max_tokens=800,
+            temperature=0.3
+        )
+        
+        formatted_response = response.choices[0].message.content.strip()
+        
+        # Add a note about data freshness
+        formatted_response += f"\n\n*Data retrieved from BigQuery with {len(result['content'])} records*"
+        
+        return formatted_response
+        
+    except Exception as e:
+        logger.error(f"Claude-style formatting error: {e}")
+        # Fallback to basic formatting
+        try:
+            row_count = len(result['content']) if result.get('content') else 0
+            if 'campaign' in question.lower():
+                data_type = "campaign performance"
+            elif 'cost' in question.lower() or 'spend' in question.lower():
+                data_type = "cost analysis"
+            elif 'conversion' in question.lower():
+                data_type = "conversion metrics"
+            else:
+                data_type = "data analysis"
+            
+            return f"Here's your {data_type} with {row_count} records from BigQuery:"
+        except:
+            return f"Here are the BigQuery results for: {question}"
+
 async def handle_bigquery_tables_query(question: str) -> dict:
     """Handle table/dataset listing queries"""
     try:
@@ -304,35 +426,6 @@ async def handle_bigquery_tables_query(question: str) -> dict:
             "processing_time": 0.5
         }
 
-async def enhance_bigquery_response(result: dict, question: str, sql_query: str) -> str:
-    """Create a better narrative response for BigQuery results"""
-    try:
-        if not result.get('content'):
-            return f"No data found for: {question}"
-        
-        # Count total rows
-        row_count = len(result['content'])
-        
-        # Try to identify what type of data we have
-        if 'campaign' in question.lower():
-            data_type = "campaign performance"
-        elif 'cost' in question.lower() or 'spend' in question.lower():
-            data_type = "cost analysis"
-        elif 'conversion' in question.lower():
-            data_type = "conversion metrics"
-        elif 'device' in question.lower():
-            data_type = "device breakdown" 
-        elif 'roas' in question.lower():
-            data_type = "ROAS analysis"
-        else:
-            data_type = "data analysis"
-        
-        return f"Here's your {data_type} with {row_count} records from BigQuery:"
-        
-    except Exception as e:
-        logger.error(f"Response enhancement error: {e}")
-        return f"Here are the BigQuery results for: {question}"
-
 def classify_query(question: str) -> Dict[str, str]:
     """Enhanced query classification"""
     question_lower = question.lower()
@@ -396,7 +489,7 @@ async def simple_supabase_search(question: str) -> Dict:
             context = "\n".join([doc['content'] for doc in documents[:3]])
             
             response = openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="gpt-4o-mini",
                 messages=[{
                     "role": "user", 
                     "content": f"""Based on this context from marketing documents:
@@ -546,7 +639,7 @@ async def chat(request: QueryRequest):
 
 @app.post("/api/unified-query")
 async def unified_query(request: UnifiedQueryRequest):
-    """Enhanced unified endpoint with better BigQuery handling"""
+    """Enhanced unified endpoint with Claude-style BigQuery formatting"""
     process_start = time.time()
     
     try:
@@ -595,20 +688,14 @@ async def unified_query(request: UnifiedQueryRequest):
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
                     "data_source": "bigquery",
-                    "sql_query": None  # No SQL for metadata queries
+                    "sql_query": None
                 }
             
             else:
-                # Handle regular SQL queries
-                # Get table schema for AI SQL generation
+                # Handle regular SQL queries with Claude-style formatting
                 table_schema = await get_cached_table_schema()
-                
-                # Generate SQL using AI
                 sql_query = await generate_sql_with_ai(request.question, table_schema)
-                
-                # Execute the generated SQL
                 result = await bigquery_mcp.execute_sql(sql_query)
-                
                 processing_time = time.time() - process_start
                 
                 # Check if query was successful
@@ -631,15 +718,15 @@ async def unified_query(request: UnifiedQueryRequest):
                         "data_source": "bigquery"
                     }
                 
-                # Create enhanced answer
-                enhanced_answer = await enhance_bigquery_response(result, request.question, sql_query)
+                # Use Claude-style formatting instead of basic enhancement
+                claude_style_answer = await format_bigquery_results_like_claude(result, request.question, sql_query)
                 
                 return {
-                    "answer": enhanced_answer,
-                    "data": result,
+                    "answer": claude_style_answer,
+                    "data": result,  # Keep raw data for frontend table display
                     "sql_query": sql_query,
                     "query_type": "quantitative",
-                    "processing_method": "ai_generated_sql",
+                    "processing_method": "claude_style_analysis",
                     "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
@@ -783,7 +870,7 @@ async def root():
     uptime = time.time() - start_time
     return {
         "service": "Marketing Intelligence API",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "status": "running",
         "uptime_seconds": round(uptime, 2),
         "environment": os.getenv("ENVIRONMENT", "unknown"),
@@ -791,6 +878,7 @@ async def root():
             "advanced_rag": CORE_MODULES_AVAILABLE,
             "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
             "ai_sql_generation": openai_client is not None,
+            "claude_style_formatting": openai_client is not None,
             "bigquery_mcp": True,
             "intelligent_routing": True,
             "response_formatting": True,
@@ -823,6 +911,7 @@ if __name__ == "__main__":
     logger.info(f"Advanced RAG available: {CORE_MODULES_AVAILABLE}")
     logger.info(f"External clients available: {EXTERNAL_CLIENTS_AVAILABLE}")
     logger.info(f"AI SQL Generation: {openai_client is not None}")
+    logger.info(f"Claude-style formatting: {openai_client is not None}")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
     
     uvicorn.run(
