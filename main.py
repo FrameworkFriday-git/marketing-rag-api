@@ -1,4 +1,4 @@
-# main.py - Updated Production FastAPI Application with AI-Powered BigQuery
+# main.py - Complete Enhanced FastAPI Application with AI-Powered BigQuery Integration
 import os
 import logging
 import time
@@ -7,17 +7,37 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Literal
+from typing import Optional, Dict, Literal, List, Any
 from dotenv import load_dotenv
 
 # BigQuery MCP integration
 from api.bigquery_mcp import bigquery_mcp
 
-# Add this request model
+# Request models
 class UnifiedQueryRequest(BaseModel):
     question: str
     data_source: Literal["rag", "bigquery"] = "rag"
     preferred_style: str = "standard"
+
+class QueryRequest(BaseModel):
+    question: str
+    preferred_style: Optional[str] = "standard"
+    context: Optional[str] = None
+
+# Response models
+class QueryResponse(BaseModel):
+    answer: str
+    query_type: str
+    processing_method: str
+    sources_used: int
+    processing_time: float
+    response_style: str
+
+class HealthResponse(BaseModel):
+    status: str
+    systems: Dict[str, str]
+    timestamp: str
+    environment: str
 
 # Load environment variables
 load_dotenv()
@@ -60,7 +80,7 @@ except ImportError as e:
 app = FastAPI(
     title="Marketing Intelligence API",
     description="Production RAG system with AI-powered BigQuery integration",
-    version="2.0.0",
+    version="2.1.0",
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
 
@@ -76,26 +96,6 @@ app.add_middleware(
 if DASHBOARD_AVAILABLE:
     app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
     logger.info("Dashboard routes included")
-
-# Pydantic models
-class QueryRequest(BaseModel):
-    question: str
-    preferred_style: Optional[str] = "standard"
-    context: Optional[str] = None
-
-class QueryResponse(BaseModel):
-    answer: str
-    query_type: str
-    processing_method: str
-    sources_used: int
-    processing_time: float
-    response_style: str
-
-class HealthResponse(BaseModel):
-    status: str
-    systems: Dict[str, str]
-    timestamp: str
-    environment: str
 
 # Global variables
 start_time = time.time()
@@ -227,6 +227,111 @@ Generate ONLY the SQL query, no explanations or markdown:"""
         ORDER BY date DESC
         LIMIT 20
         """
+
+async def handle_bigquery_tables_query(question: str) -> dict:
+    """Handle table/dataset listing queries"""
+    try:
+        # List datasets
+        datasets_result = await bigquery_mcp.list_datasets("data-tables-for-zoho")
+        
+        if datasets_result and 'content' in datasets_result:
+            datasets_list = []
+            for item in datasets_result['content']:
+                if isinstance(item, dict) and 'text' in item:
+                    # Parse the dataset name from the response
+                    dataset_name = item['text'].strip()
+                    datasets_list.append(dataset_name)
+            
+            # Get tables for the main dataset
+            try:
+                tables_result = await bigquery_mcp.list_tables("new_data_tables", "data-tables-for-zoho")
+                tables_list = []
+                
+                if tables_result and 'content' in tables_result:
+                    for item in tables_result['content']:
+                        if isinstance(item, dict) and 'text' in item:
+                            table_name = item['text'].strip()
+                            tables_list.append(table_name)
+                
+                return {
+                    "answer": f"Found {len(datasets_list)} datasets and {len(tables_list)} tables in the main dataset.",
+                    "data": {
+                        "content": [
+                            {
+                                "type": "datasets",
+                                "count": len(datasets_list),
+                                "items": datasets_list
+                            },
+                            {
+                                "type": "tables", 
+                                "dataset": "new_data_tables",
+                                "count": len(tables_list),
+                                "items": tables_list
+                            }
+                        ]
+                    },
+                    "processing_time": 1.5,
+                    "processing_method": "mcp_metadata_query"
+                }
+                
+            except Exception as tables_error:
+                return {
+                    "answer": f"Found {len(datasets_list)} datasets, but couldn't list tables: {str(tables_error)}",
+                    "data": {
+                        "content": [
+                            {
+                                "type": "datasets",
+                                "count": len(datasets_list), 
+                                "items": datasets_list
+                            }
+                        ]
+                    },
+                    "processing_time": 1.0,
+                    "processing_method": "mcp_metadata_partial"
+                }
+        else:
+            return {
+                "answer": "No datasets found or access denied.",
+                "error": "Could not retrieve dataset information",
+                "processing_time": 0.5
+            }
+            
+    except Exception as e:
+        logger.error(f"Table listing error: {e}")
+        return {
+            "answer": f"Error listing BigQuery resources: {str(e)}",
+            "error": str(e),
+            "processing_time": 0.5
+        }
+
+async def enhance_bigquery_response(result: dict, question: str, sql_query: str) -> str:
+    """Create a better narrative response for BigQuery results"""
+    try:
+        if not result.get('content'):
+            return f"No data found for: {question}"
+        
+        # Count total rows
+        row_count = len(result['content'])
+        
+        # Try to identify what type of data we have
+        if 'campaign' in question.lower():
+            data_type = "campaign performance"
+        elif 'cost' in question.lower() or 'spend' in question.lower():
+            data_type = "cost analysis"
+        elif 'conversion' in question.lower():
+            data_type = "conversion metrics"
+        elif 'device' in question.lower():
+            data_type = "device breakdown" 
+        elif 'roas' in question.lower():
+            data_type = "ROAS analysis"
+        else:
+            data_type = "data analysis"
+        
+        return f"Here's your {data_type} with {row_count} records from BigQuery:"
+        
+    except Exception as e:
+        logger.error(f"Response enhancement error: {e}")
+        return f"Here are the BigQuery results for: {question}"
 
 def classify_query(question: str) -> Dict[str, str]:
     """Enhanced query classification"""
@@ -392,6 +497,8 @@ Detailed response:"""
         logger.error(f"Response formatting error: {e}")
         return answer
 
+# API Endpoints
+
 @app.post("/api/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
     """Main chat endpoint with intelligent routing"""
@@ -437,6 +544,122 @@ async def chat(request: QueryRequest):
         logger.error(f"Chat endpoint error: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@app.post("/api/unified-query")
+async def unified_query(request: UnifiedQueryRequest):
+    """Enhanced unified endpoint with better BigQuery handling"""
+    process_start = time.time()
+    
+    try:
+        if request.data_source == "rag":
+            # RAG processing
+            if not CORE_MODULES_AVAILABLE and not EXTERNAL_CLIENTS_AVAILABLE:
+                raise HTTPException(status_code=503, detail="RAG system not available")
+            
+            classification = classify_query(request.question)
+            query_type = classification["type"]
+            
+            if query_type in ["temporal_complex", "analytical"] and CORE_MODULES_AVAILABLE:
+                result = advanced_rag_search(request.question)
+            else:
+                result = await simple_supabase_search(request.question)
+            
+            formatted_answer = await format_response_by_style(
+                result["answer"], request.preferred_style, request.question
+            )
+            
+            processing_time = time.time() - process_start
+            
+            return {
+                "answer": formatted_answer,
+                "query_type": query_type,
+                "processing_method": result.get("method", "unknown"),
+                "sources_used": result.get("sources", 0),
+                "processing_time": processing_time,
+                "response_style": request.preferred_style,
+                "data_source": "rag"
+            }
+            
+        elif request.data_source == "bigquery":
+            # Check if this is a table/dataset listing query
+            table_keywords = ['tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables']
+            
+            if any(keyword in request.question.lower() for keyword in table_keywords):
+                # Handle table listing
+                result = await handle_bigquery_tables_query(request.question)
+                processing_time = time.time() - process_start
+                
+                return {
+                    **result,
+                    "query_type": "metadata_query",
+                    "sources_used": 1,
+                    "processing_time": processing_time,
+                    "response_style": request.preferred_style,
+                    "data_source": "bigquery",
+                    "sql_query": None  # No SQL for metadata queries
+                }
+            
+            else:
+                # Handle regular SQL queries
+                # Get table schema for AI SQL generation
+                table_schema = await get_cached_table_schema()
+                
+                # Generate SQL using AI
+                sql_query = await generate_sql_with_ai(request.question, table_schema)
+                
+                # Execute the generated SQL
+                result = await bigquery_mcp.execute_sql(sql_query)
+                
+                processing_time = time.time() - process_start
+                
+                # Check if query was successful
+                if result.get("isError"):
+                    error_message = "Unknown error"
+                    if result.get("content") and len(result["content"]) > 0:
+                        error_content = result["content"][0]
+                        if isinstance(error_content, dict) and "text" in error_content:
+                            error_message = error_content["text"]
+                    
+                    return {
+                        "answer": f"I encountered an error executing your BigQuery query. The error was: {error_message}",
+                        "error": error_message,
+                        "sql_query": sql_query,
+                        "query_type": "quantitative_error",
+                        "processing_method": "ai_generated_sql_error",
+                        "sources_used": 0,
+                        "processing_time": processing_time,
+                        "response_style": request.preferred_style,
+                        "data_source": "bigquery"
+                    }
+                
+                # Create enhanced answer
+                enhanced_answer = await enhance_bigquery_response(result, request.question, sql_query)
+                
+                return {
+                    "answer": enhanced_answer,
+                    "data": result,
+                    "sql_query": sql_query,
+                    "query_type": "quantitative",
+                    "processing_method": "ai_generated_sql",
+                    "sources_used": 1,
+                    "processing_time": processing_time,
+                    "response_style": request.preferred_style,
+                    "data_source": "bigquery"
+                }
+            
+    except Exception as e:
+        logger.error(f"Unified query failed: {e}")
+        processing_time = time.time() - process_start
+        return {
+            "answer": f"Sorry, I encountered an error: {str(e)}",
+            "query_type": "error",
+            "processing_method": "error",
+            "sources_used": 0,
+            "processing_time": processing_time,
+            "response_style": request.preferred_style,
+            "data_source": request.data_source,
+            "error_details": str(e)
+        }
+
 @app.get("/api/bigquery/test")
 async def test_bigquery_connection():
     """Test BigQuery MCP connection"""
@@ -469,90 +692,40 @@ async def get_table_schema():
             "server_url": bigquery_mcp.server_url
         }
 
-@app.post("/api/unified-query")
-async def unified_query(request: UnifiedQueryRequest):
-    """Unified endpoint with AI-powered BigQuery SQL generation"""
-    process_start = time.time()
-    
+@app.get("/api/bigquery/datasets")
+async def list_bigquery_datasets():
+    """List available BigQuery datasets"""
     try:
-        if request.data_source == "rag":
-            if not CORE_MODULES_AVAILABLE and not EXTERNAL_CLIENTS_AVAILABLE:
-                raise HTTPException(status_code=503, detail="RAG system not available")
-            
-            classification = classify_query(request.question)
-            query_type = classification["type"]
-            
-            if query_type in ["temporal_complex", "analytical"] and CORE_MODULES_AVAILABLE:
-                result = advanced_rag_search(request.question)
-            else:
-                result = await simple_supabase_search(request.question)
-            
-            formatted_answer = await format_response_by_style(
-                result["answer"], request.preferred_style, request.question
-            )
-            
-            processing_time = time.time() - process_start
-            
-            return {
-                "answer": formatted_answer,
-                "query_type": query_type,
-                "processing_method": result.get("method", "unknown"),
-                "sources_used": result.get("sources", 0),
-                "processing_time": processing_time,
-                "response_style": request.preferred_style,
-                "data_source": "rag"
-            }
-            
-        elif request.data_source == "bigquery":
-            # Get table schema for AI SQL generation
-            table_schema = await get_cached_table_schema()
-            
-            # Generate SQL using AI
-            sql_query = await generate_sql_with_ai(request.question, table_schema)
-            
-            # Execute the generated SQL
-            result = await bigquery_mcp.execute_sql(sql_query)
-            
-            processing_time = time.time() - process_start
-            
-            # Check if query was successful
-            if result.get("isError"):
-                return {
-                    "answer": f"I encountered an error with your BigQuery query: {request.question}",
-                    "error": result.get("content", [{}])[0].get("text", "Unknown error"),
-                    "sql_query": sql_query,
-                    "query_type": "quantitative_error",
-                    "processing_method": "ai_generated_sql",
-                    "sources_used": 0,
-                    "processing_time": processing_time,
-                    "response_style": request.preferred_style,
-                    "data_source": "bigquery"
-                }
-            
-            return {
-                "answer": f"Here are the BigQuery results for: {request.question}",
-                "data": result,
-                "sql_query": sql_query,
-                "query_type": "quantitative",
-                "processing_method": "ai_generated_sql",
-                "sources_used": 1,
-                "processing_time": processing_time,
-                "response_style": request.preferred_style,
-                "data_source": "bigquery"
-            }
-            
-    except Exception as e:
-        logger.error(f"Unified query failed: {e}")
-        processing_time = time.time() - process_start
+        result = await bigquery_mcp.list_datasets("data-tables-for-zoho")
         return {
-            "answer": f"Sorry, I encountered an error: {str(e)}",
-            "query_type": "error",
-            "processing_method": "error",
-            "sources_used": 0,
-            "processing_time": processing_time,
-            "response_style": request.preferred_style,
-            "data_source": request.data_source,
-            "error_details": str(e)
+            "status": "success",
+            "datasets": result,
+            "server_url": bigquery_mcp.server_url
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "server_url": bigquery_mcp.server_url
+        }
+
+@app.get("/api/bigquery/tables/{dataset}")
+async def list_bigquery_tables(dataset: str):
+    """List tables in a specific dataset"""
+    try:
+        result = await bigquery_mcp.list_tables(dataset, "data-tables-for-zoho")
+        return {
+            "status": "success",
+            "dataset": dataset,
+            "tables": result,
+            "server_url": bigquery_mcp.server_url
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "error": str(e),
+            "dataset": dataset,
+            "server_url": bigquery_mcp.server_url
         }
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -610,22 +783,25 @@ async def root():
     uptime = time.time() - start_time
     return {
         "service": "Marketing Intelligence API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "running",
         "uptime_seconds": round(uptime, 2),
         "environment": os.getenv("ENVIRONMENT", "unknown"),
         "features": {
             "advanced_rag": CORE_MODULES_AVAILABLE,
             "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
-            "ai_sql_generation": True,
+            "ai_sql_generation": openai_client is not None,
             "bigquery_mcp": True,
             "intelligent_routing": True,
-            "response_formatting": True
+            "response_formatting": True,
+            "table_metadata": True
         },
         "endpoints": {
             "chat": "/api/chat",
             "unified_query": "/api/unified-query", 
             "bigquery_test": "/api/bigquery/test",
+            "bigquery_datasets": "/api/bigquery/datasets",
+            "bigquery_tables": "/api/bigquery/tables/{dataset}",
             "health": "/api/health",
             "docs": "/docs" if os.getenv("ENVIRONMENT") == "development" else "disabled"
         }
@@ -647,6 +823,7 @@ if __name__ == "__main__":
     logger.info(f"Advanced RAG available: {CORE_MODULES_AVAILABLE}")
     logger.info(f"External clients available: {EXTERNAL_CLIENTS_AVAILABLE}")
     logger.info(f"AI SQL Generation: {openai_client is not None}")
+    logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
     
     uvicorn.run(
         "main:app",
