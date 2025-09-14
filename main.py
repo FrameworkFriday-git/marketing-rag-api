@@ -1,4 +1,4 @@
-# main.py - Complete Enhanced FastAPI Application with Claude-Style BigQuery Integration
+# main.py - Complete Enhanced FastAPI Application with GPT-4o-mini Integration
 import os
 import logging
 import time
@@ -80,8 +80,8 @@ except ImportError as e:
 # Initialize FastAPI
 app = FastAPI(
     title="Marketing Intelligence API",
-    description="Production RAG system with Claude-style BigQuery integration",
-    version="2.2.0",
+    description="Production RAG system with GPT-4o-mini BigQuery integration",
+    version="2.3.0",
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
 
@@ -138,7 +138,7 @@ async def get_cached_table_schema():
     return table_schema_cache[cache_key]
 
 async def generate_sql_with_ai(question: str, table_schema: dict) -> str:
-    """Use OpenAI to convert natural language to BigQuery SQL"""
+    """Use GPT-4o-mini to convert natural language to BigQuery SQL"""
     if not openai_client:
         raise Exception("OpenAI client not available for SQL generation")
     
@@ -201,7 +201,7 @@ Generate ONLY the SQL query, no explanations or markdown:"""
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
             temperature=0.1
@@ -270,7 +270,7 @@ async def extract_campaign_metrics(result: dict) -> list:
         return []
 
 async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
-    """Format BigQuery results with Claude-style intelligent analysis"""
+    """Enhanced Claude-style formatting with better structure using GPT-4o-mini"""
     
     if not openai_client:
         return f"Here are the BigQuery results for: {question}"
@@ -288,8 +288,8 @@ async def format_bigquery_results_like_claude(result: dict, question: str, sql_q
         # Combine all raw data for analysis
         data_text = '\n'.join(raw_data)
         
-        # Create a comprehensive prompt for Claude-style analysis
-        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery campaign performance data and provide insights like Claude would.
+        # Enhanced prompt for better structured responses
+        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery campaign performance data and provide insights in a clear, structured format.
 
 ORIGINAL QUESTION: {question}
 
@@ -299,60 +299,92 @@ RAW DATA FROM BIGQUERY:
 SQL QUERY USED:
 {sql_query}
 
-INSTRUCTIONS:
-1. Parse the JSON-like data structure and extract key metrics
-2. Identify top performing campaigns by relevant metrics (ROAS, conversions, cost efficiency)
-3. Provide actionable insights about campaign performance
-4. Highlight trends, patterns, and recommendations
-5. Format the response conversationally, not as raw data
-6. Include specific numbers and percentages where relevant
-7. Group findings by account/property if multiple are present
-8. Provide a summary with key takeaways
+RESPONSE REQUIREMENTS:
+1. Start with a brief executive summary (2-3 sentences)
+2. Use clear section headers with ###
+3. Use bullet points for key findings
+4. Include specific numbers and percentages
+5. Group by account/property if multiple are present
+6. End with 2-3 actionable recommendations
 
-RESPONSE FORMAT:
-- Start with a summary statement
-- Break down performance by account/property if applicable
-- List top performing campaigns with specific metrics
-- Include key insights and patterns
-- End with actionable recommendations
+STRUCTURE YOUR RESPONSE EXACTLY LIKE THIS:
 
-Make this sound like an expert analyst explaining the data, not just displaying raw numbers."""
+### Executive Summary
+[Brief 2-3 sentence overview]
+
+### Performance Breakdown
+#### [Account/Property Name 1]
+• Top campaign: [Campaign name] - [Key metrics]
+• Key metric: [Specific number with context]
+• Notable finding: [Insight]
+
+#### [Account/Property Name 2] (if applicable)
+• [Similar structure]
+
+### Key Insights
+• [Insight 1 with supporting data]
+• [Insight 2 with supporting data]
+• [Insight 3 with supporting data]
+
+### Recommendations
+1. [Actionable recommendation 1]
+2. [Actionable recommendation 2]
+3. [Actionable recommendation 3]
+
+Make this professional, data-driven, and easy to scan with clear formatting."""
 
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": analysis_prompt}],
-            max_tokens=800,
+            max_tokens=1000,
             temperature=0.3
         )
         
         formatted_response = response.choices[0].message.content.strip()
         
-        # Add a note about data freshness
-        formatted_response += f"\n\n*Data retrieved from BigQuery with {len(result['content'])} records*"
+        # Add data freshness note
+        formatted_response += f"\n\n---\n*Analysis based on {len(result['content'])} records from BigQuery*"
         
         return formatted_response
         
     except Exception as e:
         logger.error(f"Claude-style formatting error: {e}")
-        # Fallback to basic formatting
+        # Enhanced fallback formatting
         try:
             row_count = len(result['content']) if result.get('content') else 0
+            
             if 'campaign' in question.lower():
-                data_type = "campaign performance"
+                data_type = "campaign performance analysis"
             elif 'cost' in question.lower() or 'spend' in question.lower():
                 data_type = "cost analysis"
             elif 'conversion' in question.lower():
-                data_type = "conversion metrics"
+                data_type = "conversion metrics analysis"
+            elif 'roas' in question.lower():
+                data_type = "ROAS performance analysis"
             else:
                 data_type = "data analysis"
             
-            return f"Here's your {data_type} with {row_count} records from BigQuery:"
+            return f"### {data_type.title()}\n\nRetrieved {row_count} records from BigQuery. The raw data shows various campaign metrics including cost, conversions, and performance indicators.\n\n*Unable to provide detailed analysis due to processing limitations.*"
+            
         except:
             return f"Here are the BigQuery results for: {question}"
 
 async def handle_bigquery_tables_query(question: str) -> dict:
-    """Handle table/dataset listing queries"""
+    """Enhanced table/dataset listing with better query recognition"""
     try:
+        # Expanded keywords for table listing queries
+        table_keywords = [
+            'tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables',
+            'expand', 'expand the names', 'table names', 'show me tables', 'what tables',
+            'expand names of table', 'expand the table', 'table list', 'available tables'
+        ]
+        
+        # Check if this is definitely a table listing query
+        is_table_query = any(keyword in question.lower() for keyword in table_keywords)
+        
+        if not is_table_query:
+            return None  # Let regular SQL handling take over
+        
         # List datasets
         datasets_result = await bigquery_mcp.list_datasets("data-tables-for-zoho")
         
@@ -360,7 +392,6 @@ async def handle_bigquery_tables_query(question: str) -> dict:
             datasets_list = []
             for item in datasets_result['content']:
                 if isinstance(item, dict) and 'text' in item:
-                    # Parse the dataset name from the response
                     dataset_name = item['text'].strip()
                     datasets_list.append(dataset_name)
             
@@ -375,8 +406,41 @@ async def handle_bigquery_tables_query(question: str) -> dict:
                             table_name = item['text'].strip()
                             tables_list.append(table_name)
                 
+                # Create a detailed response with all table names expanded
+                if 'expand' in question.lower() or 'names' in question.lower():
+                    # User specifically wants expanded table names
+                    table_details = []
+                    for table in tables_list:
+                        if 'campaign' in table.lower():
+                            description = "Campaign performance data"
+                        elif 'account' in table.lower():
+                            description = "Account-level metrics"
+                        elif 'ad_group' in table.lower():
+                            description = "Ad group performance data"
+                        elif 'keyword' in table.lower():
+                            description = "Keyword performance metrics"
+                        elif 'ga4' in table.lower():
+                            description = "Google Analytics 4 data"
+                        else:
+                            description = "Marketing performance data"
+                        
+                        table_details.append({
+                            "name": table,
+                            "description": description
+                        })
+                    
+                    answer = f"Here are all {len(tables_list)} tables in the BigQuery dataset:\n\n"
+                    for i, table in enumerate(table_details, 1):
+                        answer += f"{i}. **{table['name']}** - {table['description']}\n"
+                    
+                    answer += f"\nDatasets available: {', '.join(datasets_list)}"
+                    
+                else:
+                    # Regular table listing
+                    answer = f"Found {len(datasets_list)} datasets and {len(tables_list)} tables in the main dataset."
+                
                 return {
-                    "answer": f"Found {len(datasets_list)} datasets and {len(tables_list)} tables in the main dataset.",
+                    "answer": answer,
                     "data": {
                         "content": [
                             {
@@ -463,7 +527,7 @@ def classify_query(question: str) -> Dict[str, str]:
         return {"type": "general", "confidence": "0.6"}
 
 async def simple_supabase_search(question: str) -> Dict:
-    """Simple Supabase vector search for basic queries"""
+    """Simple Supabase vector search for basic queries using GPT-4o-mini"""
     try:
         if not supabase_client or not openai_client:
             raise Exception("Required clients not initialized")
@@ -553,7 +617,7 @@ def advanced_rag_search(question: str) -> Dict:
         }
 
 async def format_response_by_style(answer: str, style: str, question: str) -> str:
-    """Format response according to requested style"""
+    """Format response according to requested style using GPT-4o-mini"""
     if not openai_client or style == "standard":
         return answer
     
@@ -578,7 +642,7 @@ Detailed response:"""
             return answer
 
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.3
@@ -639,7 +703,7 @@ async def chat(request: QueryRequest):
 
 @app.post("/api/unified-query")
 async def unified_query(request: UnifiedQueryRequest):
-    """Enhanced unified endpoint with Claude-style BigQuery formatting"""
+    """Enhanced unified endpoint with better query classification"""
     process_start = time.time()
     
     try:
@@ -673,16 +737,15 @@ async def unified_query(request: UnifiedQueryRequest):
             }
             
         elif request.data_source == "bigquery":
-            # Check if this is a table/dataset listing query
-            table_keywords = ['tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables']
+            # Enhanced table query detection
+            table_result = await handle_bigquery_tables_query(request.question)
             
-            if any(keyword in request.question.lower() for keyword in table_keywords):
-                # Handle table listing
-                result = await handle_bigquery_tables_query(request.question)
+            if table_result is not None:
+                # This is a table listing query
                 processing_time = time.time() - process_start
                 
                 return {
-                    **result,
+                    **table_result,
                     "query_type": "metadata_query",
                     "sources_used": 1,
                     "processing_time": processing_time,
@@ -692,7 +755,7 @@ async def unified_query(request: UnifiedQueryRequest):
                 }
             
             else:
-                # Handle regular SQL queries with Claude-style formatting
+                # Regular SQL query
                 table_schema = await get_cached_table_schema()
                 sql_query = await generate_sql_with_ai(request.question, table_schema)
                 result = await bigquery_mcp.execute_sql(sql_query)
@@ -718,15 +781,15 @@ async def unified_query(request: UnifiedQueryRequest):
                         "data_source": "bigquery"
                     }
                 
-                # Use Claude-style formatting instead of basic enhancement
+                # Use enhanced Claude-style formatting
                 claude_style_answer = await format_bigquery_results_like_claude(result, request.question, sql_query)
                 
                 return {
                     "answer": claude_style_answer,
-                    "data": result,  # Keep raw data for frontend table display
+                    "data": result,
                     "sql_query": sql_query,
                     "query_type": "quantitative",
-                    "processing_method": "claude_style_analysis",
+                    "processing_method": "gpt4o_mini_analysis",
                     "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
@@ -870,7 +933,7 @@ async def root():
     uptime = time.time() - start_time
     return {
         "service": "Marketing Intelligence API",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "status": "running",
         "uptime_seconds": round(uptime, 2),
         "environment": os.getenv("ENVIRONMENT", "unknown"),
@@ -878,11 +941,13 @@ async def root():
             "advanced_rag": CORE_MODULES_AVAILABLE,
             "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
             "ai_sql_generation": openai_client is not None,
-            "claude_style_formatting": openai_client is not None,
+            "ai_model": "gpt-4o-mini",
+            "claude_style_formatting": "gpt-4o-mini enhanced",
             "bigquery_mcp": True,
             "intelligent_routing": True,
             "response_formatting": True,
-            "table_metadata": True
+            "table_metadata": True,
+            "structured_responses": True
         },
         "endpoints": {
             "chat": "/api/chat",
@@ -910,8 +975,7 @@ if __name__ == "__main__":
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
     logger.info(f"Advanced RAG available: {CORE_MODULES_AVAILABLE}")
     logger.info(f"External clients available: {EXTERNAL_CLIENTS_AVAILABLE}")
-    logger.info(f"AI SQL Generation: {openai_client is not None}")
-    logger.info(f"Claude-style formatting: {openai_client is not None}")
+    logger.info(f"AI Model: GPT-4o-mini")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
     
     uvicorn.run(
