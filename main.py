@@ -81,7 +81,7 @@ except ImportError as e:
 app = FastAPI(
     title="Marketing Intelligence API",
     description="Production RAG system with GPT-4o-mini BigQuery integration",
-    version="2.3.0",
+    version="2.4.0",
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
 
@@ -270,7 +270,7 @@ async def extract_campaign_metrics(result: dict) -> list:
         return []
 
 async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
-    """Enhanced Claude-style formatting with better structure using GPT-4o-mini"""
+    """Format BigQuery results with clean text formatting for chat display"""
     
     if not openai_client:
         return f"Here are the BigQuery results for: {question}"
@@ -288,50 +288,52 @@ async def format_bigquery_results_like_claude(result: dict, question: str, sql_q
         # Combine all raw data for analysis
         data_text = '\n'.join(raw_data)
         
-        # Enhanced prompt for better structured responses
-        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery campaign performance data and provide insights in a clear, structured format.
+        # Enhanced prompt for clean text formatting (no HTML/markdown)
+        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery campaign performance data and provide insights in a clean, structured text format.
 
 ORIGINAL QUESTION: {question}
 
 RAW DATA FROM BIGQUERY:
 {data_text}
 
-SQL QUERY USED:
-{sql_query}
-
 RESPONSE REQUIREMENTS:
 1. Start with a brief executive summary (2-3 sentences)
-2. Use clear section headers with ###
-3. Use bullet points for key findings
-4. Include specific numbers and percentages
-5. Group by account/property if multiple are present
-6. End with 2-3 actionable recommendations
+2. Use clean text formatting:
+   - Use "EXECUTIVE SUMMARY" for main headers (all caps)
+   - Use "Performance Breakdown" for section headers (title case)
+   - Use bullet points (•) for lists
+   - Use numbers (1., 2., 3.) for recommendations
+   - Use **bold text** for emphasis on key numbers
+3. Include specific numbers and percentages
+4. Group by account/property if multiple are present
+5. End with actionable recommendations
 
 STRUCTURE YOUR RESPONSE EXACTLY LIKE THIS:
 
-### Executive Summary
+EXECUTIVE SUMMARY
 [Brief 2-3 sentence overview]
 
-### Performance Breakdown
-#### [Account/Property Name 1]
-• Top campaign: [Campaign name] - [Key metrics]
-• Key metric: [Specific number with context]
+Performance Breakdown
+
+BudgetMailboxes.com:
+• Top campaign: **[Campaign name]** - [Key metrics]
+• Key metric: **[Specific number with context]**
 • Notable finding: [Insight]
 
-#### [Account/Property Name 2] (if applicable)
+MailboxWorks.com: (if applicable)
 • [Similar structure]
 
-### Key Insights
+Key Insights
 • [Insight 1 with supporting data]
-• [Insight 2 with supporting data]
+• [Insight 2 with supporting data]  
 • [Insight 3 with supporting data]
 
-### Recommendations
-1. [Actionable recommendation 1]
-2. [Actionable recommendation 2]
-3. [Actionable recommendation 3]
+Recommendations
+1. **[Actionable recommendation 1]**
+2. **[Actionable recommendation 2]**
+3. **[Actionable recommendation 3]**
 
-Make this professional, data-driven, and easy to scan with clear formatting."""
+Make this professional, data-driven, and easy to read in a chat interface."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -342,7 +344,7 @@ Make this professional, data-driven, and easy to scan with clear formatting."""
         
         formatted_response = response.choices[0].message.content.strip()
         
-        # Add data freshness note
+        # Add data freshness note with clean formatting
         formatted_response += f"\n\n---\n*Analysis based on {len(result['content'])} records from BigQuery*"
         
         return formatted_response
@@ -354,29 +356,29 @@ Make this professional, data-driven, and easy to scan with clear formatting."""
             row_count = len(result['content']) if result.get('content') else 0
             
             if 'campaign' in question.lower():
-                data_type = "campaign performance analysis"
+                data_type = "CAMPAIGN PERFORMANCE ANALYSIS"
             elif 'cost' in question.lower() or 'spend' in question.lower():
-                data_type = "cost analysis"
+                data_type = "COST ANALYSIS"
             elif 'conversion' in question.lower():
-                data_type = "conversion metrics analysis"
+                data_type = "CONVERSION METRICS ANALYSIS"
             elif 'roas' in question.lower():
-                data_type = "ROAS performance analysis"
+                data_type = "ROAS PERFORMANCE ANALYSIS"
             else:
-                data_type = "data analysis"
+                data_type = "DATA ANALYSIS"
             
-            return f"### {data_type.title()}\n\nRetrieved {row_count} records from BigQuery. The raw data shows various campaign metrics including cost, conversions, and performance indicators.\n\n*Unable to provide detailed analysis due to processing limitations.*"
+            return f"{data_type}\n\nRetrieved **{row_count} records** from BigQuery. The raw data shows various campaign metrics including cost, conversions, and performance indicators.\n\n*Unable to provide detailed analysis due to processing limitations.*"
             
         except:
             return f"Here are the BigQuery results for: {question}"
 
 async def handle_bigquery_tables_query(question: str) -> dict:
-    """Enhanced table/dataset listing with better query recognition"""
+    """Handle table/dataset listing with natural language responses like Claude MCP"""
     try:
-        # Expanded keywords for table listing queries
+        # Enhanced keywords for table listing queries
         table_keywords = [
             'tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables',
-            'expand', 'expand the names', 'table names', 'show me tables', 'what tables',
-            'expand names of table', 'expand the table', 'table list', 'available tables'
+            'what are the tables', 'show me tables', 'what tables', 'available tables',
+            'table names', 'list all tables', 'expand', 'expand the names', 'expand names of table'
         ]
         
         # Check if this is definitely a table listing query
@@ -385,7 +387,7 @@ async def handle_bigquery_tables_query(question: str) -> dict:
         if not is_table_query:
             return None  # Let regular SQL handling take over
         
-        # List datasets
+        # List datasets first
         datasets_result = await bigquery_mcp.list_datasets("data-tables-for-zoho")
         
         if datasets_result and 'content' in datasets_result:
@@ -406,38 +408,42 @@ async def handle_bigquery_tables_query(question: str) -> dict:
                             table_name = item['text'].strip()
                             tables_list.append(table_name)
                 
-                # Create a detailed response with all table names expanded
-                if 'expand' in question.lower() or 'names' in question.lower():
-                    # User specifically wants expanded table names
-                    table_details = []
-                    for table in tables_list:
-                        if 'campaign' in table.lower():
-                            description = "Campaign performance data"
-                        elif 'account' in table.lower():
-                            description = "Account-level metrics"
-                        elif 'ad_group' in table.lower():
-                            description = "Ad group performance data"
-                        elif 'keyword' in table.lower():
-                            description = "Keyword performance metrics"
-                        elif 'ga4' in table.lower():
-                            description = "Google Analytics 4 data"
-                        else:
-                            description = "Marketing performance data"
-                        
-                        table_details.append({
-                            "name": table,
-                            "description": description
-                        })
-                    
-                    answer = f"Here are all {len(tables_list)} tables in the BigQuery dataset:\n\n"
-                    for i, table in enumerate(table_details, 1):
-                        answer += f"{i}. **{table['name']}** - {table['description']}\n"
-                    
-                    answer += f"\nDatasets available: {', '.join(datasets_list)}"
-                    
-                else:
-                    # Regular table listing
-                    answer = f"Found {len(datasets_list)} datasets and {len(tables_list)} tables in the main dataset."
+                # Create natural language response like Claude MCP
+                answer = f"I found {len(datasets_list)} datasets in your BigQuery project. Here are the main data tables available:\n\n"
+                
+                # List tables with descriptions in natural language
+                table_descriptions = {
+                    'ads_account_performance_daily': 'Google Ads account-level daily performance metrics',
+                    'ads_campaign_performance_daily': 'Daily campaign performance data with cost, clicks, conversions',
+                    'ads_ad_group_performance_daily': 'Ad group level performance tracking',
+                    'ads_ad_performance_daily': 'Individual ad performance metrics',
+                    'ads_keyword_performance_daily': 'Keyword-level performance data',
+                    'ga4_item_performance': 'Google Analytics 4 product/item performance data',
+                    'ga4_user_summary': 'GA4 user behavior and journey summary',
+                    'consolidated_master': 'Master table combining data from multiple sources',
+                    'dim_data': 'Dimension data for analytics',
+                }
+                
+                for i, table in enumerate(tables_list, 1):
+                    description = table_descriptions.get(table, 'Marketing and analytics data')
+                    answer += f"{i}. **{table}** - {description}\n"
+                
+                # Add context about the dataset
+                main_dataset = 'new_data_tables'
+                if len(datasets_list) > 1:
+                    for ds in datasets_list:
+                        if 'new_data' in ds.lower():
+                            main_dataset = ds
+                            break
+                
+                answer += f"\nThese tables are stored in the '{main_dataset}' dataset and contain comprehensive marketing performance data spanning Google Ads campaigns, Google Analytics, and consolidated reporting metrics."
+                
+                # Add helpful context
+                answer += "\n\nYou can ask me questions like:"
+                answer += "\n• 'Show me campaign performance metrics'"
+                answer += "\n• 'What are the top performing campaigns?'"
+                answer += "\n• 'Compare conversion rates by device'"
+                answer += "\n• 'Give me a summary about budget mailboxes'"
                 
                 return {
                     "answer": answer,
@@ -461,23 +467,15 @@ async def handle_bigquery_tables_query(question: str) -> dict:
                 }
                 
             except Exception as tables_error:
+                answer = f"I found {len(datasets_list)} datasets, but encountered an issue accessing table details: {str(tables_error)}"
                 return {
-                    "answer": f"Found {len(datasets_list)} datasets, but couldn't list tables: {str(tables_error)}",
-                    "data": {
-                        "content": [
-                            {
-                                "type": "datasets",
-                                "count": len(datasets_list), 
-                                "items": datasets_list
-                            }
-                        ]
-                    },
+                    "answer": answer,
                     "processing_time": 1.0,
                     "processing_method": "mcp_metadata_partial"
                 }
         else:
             return {
-                "answer": "No datasets found or access denied.",
+                "answer": "I couldn't access your BigQuery datasets. This might be due to permissions or connection issues with the BigQuery service.",
                 "error": "Could not retrieve dataset information",
                 "processing_time": 0.5
             }
@@ -485,7 +483,7 @@ async def handle_bigquery_tables_query(question: str) -> dict:
     except Exception as e:
         logger.error(f"Table listing error: {e}")
         return {
-            "answer": f"Error listing BigQuery resources: {str(e)}",
+            "answer": f"I encountered an error while trying to access your BigQuery resources: {str(e)}. Please check your BigQuery connection and try again.",
             "error": str(e),
             "processing_time": 0.5
         }
@@ -933,7 +931,7 @@ async def root():
     uptime = time.time() - start_time
     return {
         "service": "Marketing Intelligence API",
-        "version": "2.3.0",
+        "version": "2.4.0",
         "status": "running",
         "uptime_seconds": round(uptime, 2),
         "environment": os.getenv("ENVIRONMENT", "unknown"),
@@ -942,7 +940,8 @@ async def root():
             "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
             "ai_sql_generation": openai_client is not None,
             "ai_model": "gpt-4o-mini",
-            "claude_style_formatting": "gpt-4o-mini enhanced",
+            "claude_style_formatting": "enhanced_clean_text",
+            "natural_language_tables": True,
             "bigquery_mcp": True,
             "intelligent_routing": True,
             "response_formatting": True,
@@ -976,6 +975,7 @@ if __name__ == "__main__":
     logger.info(f"Advanced RAG available: {CORE_MODULES_AVAILABLE}")
     logger.info(f"External clients available: {EXTERNAL_CLIENTS_AVAILABLE}")
     logger.info(f"AI Model: GPT-4o-mini")
+    logger.info(f"Natural language table responses: Enabled")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
     
     uvicorn.run(
