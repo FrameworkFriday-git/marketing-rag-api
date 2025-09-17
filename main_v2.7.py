@@ -1,11 +1,10 @@
-# main.py - Simplified Dynamic Discovery Without Pattern Matching v2.8.0
+# main.py - Fixed Indentation and Clean Table Listing v2.7.2
 # Version Control: 
 # v2.5.0 - Static hardcoded approach (baseline)
 # v2.6.0 - Static table descriptions with fallbacks
 # v2.7.0 - Fully dynamic real-time BigQuery discovery system
 # v2.7.1 - Fixed quote handling for dataset names from MCP responses
 # v2.7.2 - Fixed indentation and removed table descriptions
-# v2.8.0 - Removed unnecessary pattern matching complexity
 
 import os
 import logging
@@ -21,8 +20,8 @@ from dotenv import load_dotenv
 import asyncio
 
 # Version tracking
-VERSION = "2.8.0"
-PREVIOUS_STABLE_VERSION = "2.7.2"
+VERSION = "2.7.2"
+PREVIOUS_STABLE_VERSION = "2.7.1"
 
 # BigQuery MCP integration
 from api.bigquery_mcp import bigquery_mcp
@@ -93,7 +92,7 @@ except ImportError as e:
 # Initialize FastAPI
 app = FastAPI(
     title="Marketing Intelligence API",
-    description=f"Simplified Dynamic Discovery System v{VERSION}",
+    description=f"Fixed Indentation and Clean Table Listing v{VERSION}",
     version=VERSION,
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
@@ -161,7 +160,10 @@ if EXTERNAL_CLIENTS_AVAILABLE:
 
 # Quote cleaning for MCP responses
 def clean_mcp_response_text(text: str) -> str:
-    """Clean text from MCP responses that might include quotes"""
+    """
+    Clean text from MCP responses that might include quotes or other formatting
+    v2.7.2 - Handles quotes from JSON responses properly
+    """
     if not text:
         return text
     
@@ -190,6 +192,9 @@ async def discover_all_projects() -> List[str]:
     try:
         # Get projects from environment or default
         default_project = os.getenv("GOOGLE_CLOUD_PROJECT", "data-tables-for-zoho")
+        
+        # In a real implementation, you might query for accessible projects
+        # For now, we'll use the configured project
         projects = [default_project]
         
         discovery_cache.projects_cache[cache_key] = projects
@@ -229,7 +234,7 @@ async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
                         raw_name = item['text']
                         dataset_name = clean_mcp_response_text(raw_name)
                         
-                        if dataset_name:
+                        if dataset_name:  # Only add non-empty dataset names
                             datasets.append(dataset_name)
                             logger.info(f"Found dataset: '{raw_name}' -> '{dataset_name}'")
             
@@ -248,11 +253,14 @@ async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
 async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[str, Dict[str, List[str]]]:
     """Dynamically discover all tables across all datasets and projects"""
     if project and dataset:
+        # Specific project/dataset request
         projects_datasets = {project: [dataset]}
     elif project:
+        # Specific project, all datasets
         datasets = await discover_all_datasets(project)
         projects_datasets = datasets
     else:
+        # All projects, all datasets
         projects_datasets = await discover_all_datasets()
     
     all_tables = {}
@@ -268,6 +276,7 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
                 continue
             
             try:
+                # Use cleaned dataset name for API call
                 logger.info(f"Listing tables for dataset: '{ds}' in project: '{proj}'")
                 result = await bigquery_mcp.list_tables(ds, proj)
                 tables = []
@@ -275,10 +284,11 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
                 if result and 'content' in result:
                     for item in result['content']:
                         if isinstance(item, dict) and 'text' in item:
+                            # Clean quotes from table names too
                             raw_name = item['text']
                             table_name = clean_mcp_response_text(raw_name)
                             
-                            if table_name:
+                            if table_name:  # Only add non-empty table names
                                 tables.append(table_name)
                                 logger.info(f"Found table: '{raw_name}' -> '{table_name}'")
                 
@@ -309,6 +319,104 @@ async def get_table_schema_dynamic(project: str, dataset: str, table: str) -> di
     except Exception as e:
         logger.error(f"Schema retrieval error for {project}.{dataset}.{table}: {e}")
         return {}
+
+def generate_table_description_v2(table_name: str, dataset_name: str = None, project_name: str = None) -> str:
+    """
+    Enhanced dynamic table description generator v2.7.2
+    Uses project, dataset, and table context for better descriptions
+    """
+    table_lower = table_name.lower()
+    dataset_lower = dataset_name.lower() if dataset_name else ""
+    
+    # Context-aware descriptions using dataset information
+    if 'marketing' in dataset_lower or 'ads' in dataset_lower:
+        base_context = "Marketing"
+    elif 'analytics' in dataset_lower or 'ga4' in dataset_lower:
+        base_context = "Analytics"
+    elif 'sales' in dataset_lower or 'revenue' in dataset_lower:
+        base_context = "Sales"
+    elif 'customer' in dataset_lower or 'user' in dataset_lower:
+        base_context = "Customer"
+    elif 'shipstation' in dataset_lower:
+        base_context = "Shipping"
+    else:
+        base_context = "Business"
+    
+    # Enhanced pattern matching with dataset context
+    if table_lower.startswith('ads_'):
+        table_type = table_lower.replace('ads_', '').replace('_daily', '').replace('_', ' ')
+        return f"Google Ads {table_type} {base_context.lower()} data"
+    
+    elif table_lower.startswith('ga4_'):
+        table_type = table_lower.replace('ga4_', '').replace('_', ' ')
+        return f"Google Analytics 4 {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('facebook_') or table_lower.startswith('fb_'):
+        table_type = table_lower.replace('facebook_', '').replace('fb_', '').replace('_', ' ')
+        return f"Facebook Ads {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('linkedin_'):
+        table_type = table_lower.replace('linkedin_', '').replace('_', ' ')
+        return f"LinkedIn Ads {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('tiktok_'):
+        table_type = table_lower.replace('tiktok_', '').replace('_', ' ')
+        return f"TikTok Ads {table_type} {base_context.lower()}"
+    
+    elif 'shipment' in table_lower or 'shipping' in table_lower:
+        return f"Shipment and logistics {base_context.lower()} data"
+    
+    elif table_lower.startswith('dim_'):
+        dimension = table_lower.replace('dim_', '').replace('_', ' ')
+        return f"Dimension table for {dimension} analysis"
+    
+    elif 'performance' in table_lower:
+        if '_' in table_lower:
+            platform = table_lower.split('_')[0].title()
+            return f"{platform} performance {base_context.lower()} data"
+        else:
+            return f"{base_context} performance metrics"
+    
+    elif 'campaign' in table_lower:
+        return f"Campaign-level {base_context.lower()} data"
+    
+    elif 'keyword' in table_lower:
+        return f"Keyword and search term {base_context.lower()} data"
+    
+    elif 'user' in table_lower or 'customer' in table_lower:
+        return f"User behavior and demographic {base_context.lower()} data"
+    
+    elif 'conversion' in table_lower:
+        return f"Conversion tracking and attribution {base_context.lower()} data"
+    
+    elif 'revenue' in table_lower or 'sales' in table_lower:
+        return f"Revenue and sales {base_context.lower()} data"
+    
+    elif 'audience' in table_lower:
+        return f"Audience segmentation {base_context.lower()} data"
+    
+    elif 'creative' in table_lower or 'asset' in table_lower:
+        return f"Creative assets and ad {base_context.lower()} data"
+    
+    elif table_lower.endswith('_daily'):
+        base_name = table_lower.replace('_daily', '').replace('_', ' ')
+        return f"Daily {base_name} {base_context.lower()} metrics"
+    
+    elif table_lower.endswith('_weekly'):
+        base_name = table_lower.replace('_weekly', '').replace('_', ' ')
+        return f"Weekly {base_name} {base_context.lower()} aggregates"
+    
+    elif table_lower.endswith('_monthly'):
+        base_name = table_lower.replace('_monthly', '').replace('_', ' ')
+        return f"Monthly {base_name} {base_context.lower()} summary"
+    
+    elif 'master' in table_lower or 'consolidated' in table_lower:
+        return f"Consolidated {base_context.lower()} data from multiple sources"
+    
+    else:
+        # Intelligent fallback using table name structure
+        clean_name = table_lower.replace('_', ' ').title()
+        return f"{clean_name} - {base_context} analytics table"
 
 async def generate_sql_with_ai_dynamic(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
     """Use GPT-4o-mini to convert natural language to BigQuery SQL with dynamic table selection"""
@@ -398,36 +506,82 @@ Generate ONLY the SQL query, no explanations or markdown:"""
         return fallback_sql, (project, dataset, table)
 
 async def select_best_table_for_query(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
-    """Select the most relevant table for a given query using simple logic"""
+    """Select the most relevant table for a given query using AI"""
+    if not openai_client:
+        # Fallback logic
+        question_lower = question.lower()
+        
+        for project, datasets in available_tables.items():
+            for dataset, tables in datasets.items():
+                for table in tables:
+                    if any(keyword in question_lower for keyword in ['campaign', 'ads']) and 'campaign' in table:
+                        return (project, dataset, table)
+                    elif 'performance' in question_lower and 'performance' in table:
+                        return (project, dataset, table)
+        
+        # Return first available table if no match
+        for project, datasets in available_tables.items():
+            for dataset, tables in datasets.items():
+                if tables:
+                    return (project, dataset, tables[0])
+        
+        return None
     
-    # SIMPLIFIED v2.8.0: Basic keyword matching without complex patterns
-    question_lower = question.lower()
-    
-    # Simple keyword-based selection
+    # Prepare table options for AI selection
+    table_options = []
     for project, datasets in available_tables.items():
         for dataset, tables in datasets.items():
             for table in tables:
-                table_lower = table.lower()
-                
-                # Basic matching - no complex patterns
-                if 'campaign' in question_lower and 'campaign' in table_lower:
-                    return (project, dataset, table)
-                elif 'performance' in question_lower and 'performance' in table_lower:
-                    return (project, dataset, table)
-                elif 'ads' in question_lower and 'ads' in table_lower:
-                    return (project, dataset, table)
-                elif 'revenue' in question_lower and ('revenue' in table_lower or 'sales' in table_lower):
-                    return (project, dataset, table)
-                elif 'shipping' in question_lower and ('shipment' in table_lower or 'shipping' in table_lower):
-                    return (project, dataset, table)
+                description = generate_table_description_v2(table, dataset, project)
+                table_options.append({
+                    "project": project,
+                    "dataset": dataset, 
+                    "table": table,
+                    "description": description
+                })
     
-    # If no keyword match, return first available table
-    for project, datasets in available_tables.items():
-        for dataset, tables in datasets.items():
-            if tables:
-                return (project, dataset, tables[0])
+    if not table_options:
+        return None
     
-    return None
+    options_text = "\n".join([
+        f"- {opt['project']}.{opt['dataset']}.{opt['table']}: {opt['description']}"
+        for opt in table_options
+    ])
+    
+    prompt = f"""Given this question: "{question}"
+
+Available tables:
+{options_text}
+
+Select the MOST RELEVANT table for answering this question. Respond with only the project.dataset.table format (e.g., "project-name.dataset-name.table-name").
+
+If the question is about campaigns, ads performance, or marketing metrics, choose ads/campaign tables.
+If it's about user behavior or analytics, choose ga4 or analytics tables.
+If it's about consolidated reporting, choose master or consolidated tables.
+
+Your response:"""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0.1
+        )
+        
+        selected = response.choices[0].message.content.strip()
+        
+        # Parse the response
+        if '.' in selected:
+            parts = selected.split('.')
+            if len(parts) == 3:
+                return tuple(parts)
+        
+    except Exception as e:
+        logger.error(f"Table selection error: {e}")
+    
+    # Fallback to first table
+    return (table_options[0]['project'], table_options[0]['dataset'], table_options[0]['table'])
 
 async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
     """Format BigQuery results with clean, readable text formatting for chat display"""
@@ -448,6 +602,7 @@ async def format_bigquery_results_like_claude(result: dict, question: str, sql_q
         # Combine all raw data for analysis
         data_text = '\n'.join(raw_data)
         
+        # Enhanced prompt for clean, readable chat formatting
         analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery data and provide insights in a clean, readable format for a chat interface.
 
 ORIGINAL QUESTION: {question}
@@ -495,8 +650,8 @@ Make this professional and easy to read in a chat interface."""
 
 async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
     """
-    Handle table/dataset listing with simple, clean formatting
-    Version: 2.8.0 - Simplified without pattern matching complexity
+    Handle table/dataset listing with consistent indentation and no descriptions
+    Version: 2.7.2 - Fixed indentation formatting and removed table descriptions
     """
     try:
         # Enhanced keywords for table listing queries
@@ -525,7 +680,7 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
             for tables in datasets.values()
         )
         
-        # Create clean response - no complex descriptions
+        # Create comprehensive response with consistent formatting
         answer = f"I discovered {len(projects)} projects with {total_datasets} datasets and {total_tables} tables. Here's what's available:\n\n"
         
         table_counter = 1
@@ -543,41 +698,39 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 answer += f"Dataset: {dataset} ({len(tables)} tables)\n\n"
                 
                 for table in tables:
-                    # SIMPLIFIED v2.8.0: Just show table names, no descriptions
+                    # FIXED v2.7.2: Consistent indentation, no descriptions
                     answer += f"{table_counter}. {table}\n"
                     table_counter += 1
                 
                 answer += "\n"
         
-        # Generate simple sample questions based on actual table names
+        # Add dynamic sample questions based on discovered tables
         answer += "SAMPLE QUESTIONS YOU CAN ASK:\n"
         
-        # Simple sample questions without complex pattern matching
-        sample_questions = set()
+        # Generate sample questions based on actual table names
+        sample_questions = []
         for datasets in all_tables.values():
             for tables in datasets.values():
                 for table in tables:
                     if 'campaign' in table.lower():
-                        sample_questions.add("• Show me campaign performance metrics")
-                    if 'performance' in table.lower():
-                        sample_questions.add("• What are the top performing campaigns?")
-                    if 'revenue' in table.lower() or 'sales' in table.lower():
-                        sample_questions.add("• Show me sales and revenue data")
-                    if 'shipment' in table.lower():
-                        sample_questions.add("• Analyze shipping performance")
-                    if 'keyword' in table.lower():
-                        sample_questions.add("• Analyze keyword performance")
-                    
-                    # Stop at 5 questions
-                    if len(sample_questions) >= 5:
-                        break
-                if len(sample_questions) >= 5:
+                        sample_questions.append("• Show me campaign performance metrics")
+                    elif 'performance' in table.lower():
+                        sample_questions.append("• What are the top performing campaigns?")
+                    elif 'keyword' in table.lower():
+                        sample_questions.append("• Analyze keyword performance")
+                    elif 'revenue' in table.lower() or 'sales' in table.lower():
+                        sample_questions.append("• Show me sales and revenue data")
+                    elif 'shipment' in table.lower():
+                        sample_questions.append("• Analyze shipping performance")
+                
+                # Limit to 5 unique sample questions
+                if len(set(sample_questions)) >= 5:
                     break
-            if len(sample_questions) >= 5:
+            if len(set(sample_questions)) >= 5:
                 break
         
-        # Add sample questions
-        for question_text in list(sample_questions)[:5]:
+        # Add the unique sample questions
+        for question_text in list(set(sample_questions))[:5]:
             answer += f"{question_text}\n"
         
         return {
@@ -590,14 +743,14 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 "cache_ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60
             },
             "processing_time": 2.0,
-            "processing_method": "simplified_discovery_v2.8.0",
+            "processing_method": "dynamic_discovery_v2.7.2",
             "version": VERSION
         }
         
     except Exception as e:
         logger.error(f"Dynamic table discovery error: {e}")
         return {
-            "answer": f"I encountered an error while discovering your BigQuery resources:\n\n{str(e)}\n\nThis might be due to permissions or connection issues.",
+            "answer": f"I encountered an error while discovering your BigQuery resources:\n\n{str(e)}\n\nThis might be due to permissions or connection issues. The system is designed to automatically discover all projects, datasets, and tables, but requires proper BigQuery access.",
             "error": str(e),
             "processing_time": 0.5,
             "version": VERSION
@@ -816,7 +969,7 @@ async def chat(request: QueryRequest):
 
 @app.post("/api/unified-query")
 async def unified_query(request: UnifiedQueryRequest):
-    """Enhanced unified endpoint with simplified BigQuery discovery"""
+    """Enhanced unified endpoint with fully dynamic BigQuery discovery"""
     process_start = time.time()
     
     try:
@@ -850,7 +1003,7 @@ async def unified_query(request: UnifiedQueryRequest):
             }
             
         elif request.data_source == "bigquery":
-            # Simplified table query detection
+            # Dynamic table query detection with fixed formatting
             table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
@@ -868,7 +1021,7 @@ async def unified_query(request: UnifiedQueryRequest):
                 }
             
             else:
-                # Regular SQL query with simplified table selection
+                # Regular SQL query with dynamic table selection
                 available_tables = await discover_all_tables()
                 sql_query, table_info = await generate_sql_with_ai_dynamic(request.question, available_tables)
                 result = await bigquery_mcp.execute_sql(sql_query)
@@ -888,7 +1041,7 @@ async def unified_query(request: UnifiedQueryRequest):
                         "sql_query": sql_query,
                         "table_used": table_info,
                         "query_type": "quantitative_error",
-                        "processing_method": "simplified_sql_error",
+                        "processing_method": "dynamic_sql_error",
                         "sources_used": 0,
                         "processing_time": processing_time,
                         "response_style": request.preferred_style,
@@ -904,7 +1057,7 @@ async def unified_query(request: UnifiedQueryRequest):
                     "sql_query": sql_query,
                     "table_used": table_info,
                     "query_type": "quantitative",
-                    "processing_method": "simplified_table_selection_v2.8.0",
+                    "processing_method": "dynamic_table_selection_v2.7.2",
                     "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
@@ -1074,8 +1227,7 @@ async def root():
             "multi_project_support": True,
             "auto_scaling": True,
             "quote_handling_fixed": True,
-            "clean_formatting": True,
-            "simplified_logic": True  # NEW v2.8.0
+            "clean_formatting": True  # NEW v2.7.2
         },
         "endpoints": {
             "chat": "/api/chat",
@@ -1086,19 +1238,22 @@ async def root():
             "health": "/api/health"
         },
         "changelog": {
-            "v2.8.0": [
-                "Removed unnecessary pattern matching complexity",
-                "Simplified table selection logic",
-                "Cleaner codebase with reduced overhead",
-                "Maintained all dynamic discovery functionality",
-                "Focus on core features without bloat"
-            ],
             "v2.7.2": [
                 "Fixed indentation consistency in table listings",
-                "Removed table descriptions from display"
+                "Removed table descriptions from display",
+                "Simplified output formatting for better readability",
+                "Maintained sequential numbering across datasets"
             ],
-            "v2.7.1": ["Fixed quote handling for dataset names"],
-            "v2.7.0": ["Fully dynamic BigQuery resource discovery"]
+            "v2.7.1": [
+                "Fixed quote handling for dataset names in MCP responses",
+                "Added proper text cleaning for all MCP JSON responses"
+            ],
+            "v2.7.0": [
+                "Fully dynamic BigQuery resource discovery",
+                "Real-time table and dataset detection",
+                "Intelligent table selection for queries",
+                "Multi-project support"
+            ]
         }
     }
 
@@ -1113,10 +1268,10 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info(f"Starting Simplified Dynamic Discovery System v{VERSION}")
+    logger.info(f"Starting Clean Formatting System v{VERSION}")
     logger.info(f"Server: {host}:{port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
-    logger.info(f"Features: Simplified dynamic discovery without pattern matching")
+    logger.info(f"Features: Dynamic discovery with clean formatting")
     logger.info(f"Cache TTL: 5 minutes")
     logger.info(f"Multi-project support: Enabled")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
