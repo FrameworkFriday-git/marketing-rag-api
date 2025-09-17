@@ -1,11 +1,10 @@
-# main.py - HOTFIX v2.7.2.3 - Complete Fixed Version with Deterministic SQL
+# main.py - Fixed Indentation and Clean Table Listing v2.7.2
 # Version Control: 
 # v2.5.0 - Static hardcoded approach (baseline)
 # v2.6.0 - Static table descriptions with fallbacks
 # v2.7.0 - Fully dynamic real-time BigQuery discovery system
 # v2.7.1 - Fixed quote handling for dataset names from MCP responses
 # v2.7.2 - Fixed indentation and removed table descriptions
-# v2.7.2.3 - COMPLETE HOTFIX: Deterministic SQL generation, no AI randomness
 
 import os
 import logging
@@ -21,8 +20,8 @@ from dotenv import load_dotenv
 import asyncio
 
 # Version tracking
-VERSION = "2.7.2.3"
-PREVIOUS_STABLE_VERSION = "2.7.2"
+VERSION = "2.7.2"
+PREVIOUS_STABLE_VERSION = "2.7.1"
 
 # BigQuery MCP integration
 from api.bigquery_mcp import bigquery_mcp
@@ -66,11 +65,12 @@ logger = logging.getLogger(__name__)
 # Import our core modules
 try:
     from api.core.qa_engine import qa_engine
+    from api.core.database import db
     CORE_MODULES_AVAILABLE = True
     logger.info("Core RAG modules loaded successfully")
 except ImportError as e:
     CORE_MODULES_AVAILABLE = False
-    logger.warning(f"Core modules not available: {e}")
+    logger.error(f"Failed to load core modules: {e}")
 
 try:
     from supabase import create_client
@@ -78,12 +78,21 @@ try:
     EXTERNAL_CLIENTS_AVAILABLE = True
 except ImportError as e:
     EXTERNAL_CLIENTS_AVAILABLE = False
-    logger.warning(f"External clients not available: {e}")
+    logger.error(f"External clients not available: {e}")
+
+# Import dashboard routes
+try:
+    from api.routes.dashboard import router as dashboard_router
+    DASHBOARD_AVAILABLE = True
+    logger.info("Dashboard routes loaded successfully")
+except ImportError as e:
+    DASHBOARD_AVAILABLE = False
+    logger.error(f"Dashboard routes not available: {e}")
 
 # Initialize FastAPI
 app = FastAPI(
-    title="Marketing Intelligence API - DETERMINISTIC HOTFIX",
-    description=f"Complete Deterministic SQL Generation v{VERSION}",
+    title="Marketing Intelligence API",
+    description=f"Fixed Indentation and Clean Table Listing v{VERSION}",
     version=VERSION,
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
@@ -95,6 +104,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Include dashboard routes if available
+if DASHBOARD_AVAILABLE:
+    app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
+    logger.info("Dashboard routes included")
 
 # Global variables
 start_time = time.time()
@@ -210,18 +224,19 @@ async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
             continue
         
         try:
-            result = await bigquery_mcp.list_dataset_ids(proj)
+            result = await bigquery_mcp.list_datasets(proj)
             datasets = []
             
             if result and 'content' in result:
                 for item in result['content']:
-                    if isinstance(item, str):
+                    if isinstance(item, dict) and 'text' in item:
                         # Clean quotes from dataset names
-                        dataset_name = clean_mcp_response_text(item)
+                        raw_name = item['text']
+                        dataset_name = clean_mcp_response_text(raw_name)
                         
                         if dataset_name:  # Only add non-empty dataset names
                             datasets.append(dataset_name)
-                            logger.info(f"Found dataset: '{item}' -> '{dataset_name}'")
+                            logger.info(f"Found dataset: '{raw_name}' -> '{dataset_name}'")
             
             all_datasets[proj] = datasets
             discovery_cache.datasets_cache[cache_key] = datasets
@@ -263,18 +278,19 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
             try:
                 # Use cleaned dataset name for API call
                 logger.info(f"Listing tables for dataset: '{ds}' in project: '{proj}'")
-                result = await bigquery_mcp.list_table_ids(ds, proj)
+                result = await bigquery_mcp.list_tables(ds, proj)
                 tables = []
                 
                 if result and 'content' in result:
                     for item in result['content']:
-                        if isinstance(item, str):
+                        if isinstance(item, dict) and 'text' in item:
                             # Clean quotes from table names too
-                            table_name = clean_mcp_response_text(item)
+                            raw_name = item['text']
+                            table_name = clean_mcp_response_text(raw_name)
                             
                             if table_name:  # Only add non-empty table names
                                 tables.append(table_name)
-                                logger.info(f"Found table: '{item}' -> '{table_name}'")
+                                logger.info(f"Found table: '{raw_name}' -> '{table_name}'")
                 
                 all_tables[proj][ds] = tables
                 discovery_cache.tables_cache[cache_key] = tables
@@ -288,181 +304,354 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
     
     return all_tables
 
-# HOTFIX: Deterministic table selection - NO AI RANDOMNESS
-async def select_best_table_for_query(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
-    """HOTFIX: Deterministic table selection without AI randomness"""
-    question_lower = question.lower()
+async def get_table_schema_dynamic(project: str, dataset: str, table: str) -> dict:
+    """Get table schema with dynamic caching"""
+    cache_key = f"schema_{project}_{dataset}_{table}"
     
-    # Priority-based deterministic selection - same input = same output
-    table_priorities = [
-        # ROAS/Campaign queries
-        (['roas', 'campaign', 'performance', 'top'], ['campaign', 'ads', 'performance']),
-        # Order/shipping queries
-        (['order', 'item', 'summary', 'week', 'shipping', 'last'], ['order', 'item', 'shipment', 'crm']),
-        # Keyword queries
-        (['keyword', 'search'], ['keyword']),
-        # Analytics queries
-        (['analytics', 'ga4'], ['ga4', 'analytics']),
-    ]
+    if discovery_cache.is_cache_valid(cache_key) and cache_key in discovery_cache.schema_cache:
+        return discovery_cache.schema_cache[cache_key]
     
-    # Deterministic matching - same input = same output
-    for question_keywords, table_keywords in table_priorities:
-        if any(keyword in question_lower for keyword in question_keywords):
-            for project, datasets in available_tables.items():
-                for dataset, tables in datasets.items():
-                    # Sort tables to ensure deterministic selection
-                    sorted_tables = sorted(tables)
-                    for table in sorted_tables:
-                        if any(table_keyword in table.lower() for table_keyword in table_keywords):
-                            logger.info(f"HOTFIX: Selected {project}.{dataset}.{table} for '{question}'")
-                            return (project, dataset, table)
-    
-    # Fallback: return first table deterministically
-    for project, datasets in available_tables.items():
-        for dataset, tables in datasets.items():
-            if tables:
-                first_table = sorted(tables)[0]  # Ensure deterministic fallback
-                logger.info(f"HOTFIX: Fallback selection {project}.{dataset}.{first_table}")
-                return (project, dataset, first_table)
-    
-    return None
+    try:
+        schema = await bigquery_mcp.get_table_info(dataset, table, project)
+        discovery_cache.schema_cache[cache_key] = schema
+        discovery_cache.update_cache_timestamp(cache_key)
+        return schema
+    except Exception as e:
+        logger.error(f"Schema retrieval error for {project}.{dataset}.{table}: {e}")
+        return {}
 
-# HOTFIX: Safe SQL patterns - NO AI GENERATION
-async def generate_sql_with_ai_dynamic(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
-    """HOTFIX: Use safe SQL patterns instead of AI generation"""
+def generate_table_description_v2(table_name: str, dataset_name: str = None, project_name: str = None) -> str:
+    """
+    Enhanced dynamic table description generator v2.7.2
+    Uses project, dataset, and table context for better descriptions
+    """
+    table_lower = table_name.lower()
+    dataset_lower = dataset_name.lower() if dataset_name else ""
     
-    # Find the most relevant table deterministically
+    # Context-aware descriptions using dataset information
+    if 'marketing' in dataset_lower or 'ads' in dataset_lower:
+        base_context = "Marketing"
+    elif 'analytics' in dataset_lower or 'ga4' in dataset_lower:
+        base_context = "Analytics"
+    elif 'sales' in dataset_lower or 'revenue' in dataset_lower:
+        base_context = "Sales"
+    elif 'customer' in dataset_lower or 'user' in dataset_lower:
+        base_context = "Customer"
+    elif 'shipstation' in dataset_lower:
+        base_context = "Shipping"
+    else:
+        base_context = "Business"
+    
+    # Enhanced pattern matching with dataset context
+    if table_lower.startswith('ads_'):
+        table_type = table_lower.replace('ads_', '').replace('_daily', '').replace('_', ' ')
+        return f"Google Ads {table_type} {base_context.lower()} data"
+    
+    elif table_lower.startswith('ga4_'):
+        table_type = table_lower.replace('ga4_', '').replace('_', ' ')
+        return f"Google Analytics 4 {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('facebook_') or table_lower.startswith('fb_'):
+        table_type = table_lower.replace('facebook_', '').replace('fb_', '').replace('_', ' ')
+        return f"Facebook Ads {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('linkedin_'):
+        table_type = table_lower.replace('linkedin_', '').replace('_', ' ')
+        return f"LinkedIn Ads {table_type} {base_context.lower()}"
+    
+    elif table_lower.startswith('tiktok_'):
+        table_type = table_lower.replace('tiktok_', '').replace('_', ' ')
+        return f"TikTok Ads {table_type} {base_context.lower()}"
+    
+    elif 'shipment' in table_lower or 'shipping' in table_lower:
+        return f"Shipment and logistics {base_context.lower()} data"
+    
+    elif table_lower.startswith('dim_'):
+        dimension = table_lower.replace('dim_', '').replace('_', ' ')
+        return f"Dimension table for {dimension} analysis"
+    
+    elif 'performance' in table_lower:
+        if '_' in table_lower:
+            platform = table_lower.split('_')[0].title()
+            return f"{platform} performance {base_context.lower()} data"
+        else:
+            return f"{base_context} performance metrics"
+    
+    elif 'campaign' in table_lower:
+        return f"Campaign-level {base_context.lower()} data"
+    
+    elif 'keyword' in table_lower:
+        return f"Keyword and search term {base_context.lower()} data"
+    
+    elif 'user' in table_lower or 'customer' in table_lower:
+        return f"User behavior and demographic {base_context.lower()} data"
+    
+    elif 'conversion' in table_lower:
+        return f"Conversion tracking and attribution {base_context.lower()} data"
+    
+    elif 'revenue' in table_lower or 'sales' in table_lower:
+        return f"Revenue and sales {base_context.lower()} data"
+    
+    elif 'audience' in table_lower:
+        return f"Audience segmentation {base_context.lower()} data"
+    
+    elif 'creative' in table_lower or 'asset' in table_lower:
+        return f"Creative assets and ad {base_context.lower()} data"
+    
+    elif table_lower.endswith('_daily'):
+        base_name = table_lower.replace('_daily', '').replace('_', ' ')
+        return f"Daily {base_name} {base_context.lower()} metrics"
+    
+    elif table_lower.endswith('_weekly'):
+        base_name = table_lower.replace('_weekly', '').replace('_', ' ')
+        return f"Weekly {base_name} {base_context.lower()} aggregates"
+    
+    elif table_lower.endswith('_monthly'):
+        base_name = table_lower.replace('_monthly', '').replace('_', ' ')
+        return f"Monthly {base_name} {base_context.lower()} summary"
+    
+    elif 'master' in table_lower or 'consolidated' in table_lower:
+        return f"Consolidated {base_context.lower()} data from multiple sources"
+    
+    else:
+        # Intelligent fallback using table name structure
+        clean_name = table_lower.replace('_', ' ').title()
+        return f"{clean_name} - {base_context} analytics table"
+
+async def generate_sql_with_ai_dynamic(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
+    """Use GPT-4o-mini to convert natural language to BigQuery SQL with dynamic table selection"""
+    if not openai_client:
+        raise Exception("OpenAI client not available for SQL generation")
+    
+    # Find the most relevant table based on the question
     relevant_table_info = await select_best_table_for_query(question, available_tables)
     
     if not relevant_table_info:
         raise Exception("No suitable table found for the query")
     
     project, dataset, table = relevant_table_info
-    full_table_name = f"`{project}.{dataset}.{table}`"
-    question_lower = question.lower()
     
-    # SAFE SQL PATTERNS - No AI generation, no randomness
-    if any(keyword in question_lower for keyword in ['roas', 'top', 'performing', 'campaign']):
-        if 'roas' in question_lower:
-            sql_query = f"""
-            SELECT 
-                campaign_name,
-                SUM(CAST(spend AS FLOAT64)) as total_spend,
-                SUM(CAST(conversions_value AS FLOAT64)) as total_conversions_value,
-                ROUND(SUM(CAST(conversions_value AS FLOAT64)) / NULLIF(SUM(CAST(spend AS FLOAT64)), 0), 2) as roas
-            FROM {full_table_name}
-            WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-            GROUP BY campaign_name
-            HAVING total_spend > 0
-            ORDER BY roas DESC
-            LIMIT 10
-            """
-        else:
-            sql_query = f"""
-            SELECT 
-                campaign_name,
-                SUM(CAST(clicks AS INT64)) as total_clicks,
-                SUM(CAST(impressions AS INT64)) as total_impressions,
-                SUM(CAST(spend AS FLOAT64)) as total_spend,
-                SUM(CAST(conversions AS INT64)) as total_conversions
-            FROM {full_table_name}
-            WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-            GROUP BY campaign_name
-            ORDER BY total_spend DESC
-            LIMIT 10
-            """
+    # Get schema for the selected table
+    table_schema = await get_table_schema_dynamic(project, dataset, table)
     
-    elif any(keyword in question_lower for keyword in ['order', 'item', 'summary', 'week', 'last']):
-        sql_query = f"""
-        SELECT 
-            *
-        FROM {full_table_name}
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-        ORDER BY date DESC
-        LIMIT 20
-        """
+    # Extract column information from schema
+    columns_info = []
+    if "content" in table_schema and table_schema["content"]:
+        try:
+            schema_text = table_schema["content"][0]["text"]
+            schema_data = json.loads(schema_text)
+            for field in schema_data.get("Schema", []):
+                columns_info.append({
+                    "name": field["Name"],
+                    "type": field["Type"],
+                    "description": field.get("Description", "")
+                })
+        except Exception as e:
+            logger.error(f"Schema parsing error: {e}")
     
-    elif 'keyword' in question_lower:
-        sql_query = f"""
-        SELECT 
-            keyword,
-            SUM(CAST(clicks AS INT64)) as total_clicks,
-            SUM(CAST(impressions AS INT64)) as total_impressions,
-            ROUND(SUM(CAST(clicks AS INT64)) / NULLIF(SUM(CAST(impressions AS INT64)), 0) * 100, 2) as ctr_percent
-        FROM {full_table_name}
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        GROUP BY keyword
-        HAVING total_impressions > 0
-        ORDER BY total_clicks DESC
-        LIMIT 15
-        """
+    columns_text = "\n".join([f"- {col['name']} ({col['type']})" for col in columns_info])
     
-    elif 'device' in question_lower:
-        sql_query = f"""
-        SELECT 
-            device,
-            SUM(CAST(clicks AS INT64)) as total_clicks,
-            SUM(CAST(impressions AS INT64)) as total_impressions,
-            SUM(CAST(spend AS FLOAT64)) as total_spend
-        FROM {full_table_name}
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        GROUP BY device
-        ORDER BY total_spend DESC
-        LIMIT 5
-        """
-    
-    else:
-        # Safe default query
-        sql_query = f"""
-        SELECT *
-        FROM {full_table_name}
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-        ORDER BY date DESC
-        LIMIT 20
-        """
-    
-    logger.info(f"HOTFIX: Generated deterministic SQL for {project}.{dataset}.{table}")
-    return sql_query.strip(), (project, dataset, table)
+    prompt = f"""You are an expert BigQuery SQL analyst. Convert this natural language question into a valid BigQuery SQL query.
 
-# SIMPLIFIED: Result formatting without AI complexity
-async def format_bigquery_results_simple(result: dict, question: str, sql_query: str = None) -> str:
-    """Simple result formatting without AI to ensure consistency"""
-    
-    if not result.get('content'):
-        return f"No data found for: {question}"
-    
-    content = result.get('content', [])
-    
-    # Simple, consistent formatting
-    answer = f"RESULTS FOR: {question}\n\n"
-    answer += f"EXECUTIVE SUMMARY:\n"
-    answer += f"Retrieved {len(content)} records from BigQuery.\n\n"
-    
-    if content:
-        answer += f"KEY FINDINGS:\n"
+DATABASE SCHEMA:
+Table: `{project}.{dataset}.{table}`
+Available Columns:
+{columns_text}
+
+QUESTION: {question}
+
+REQUIREMENTS:
+1. Use proper BigQuery syntax and functions
+2. Always include the full table name: `{project}.{dataset}.{table}`
+3. Use appropriate aggregation functions (SUM, AVG, COUNT, etc.)
+4. Include reasonable date filters (typically last 30 days unless specified otherwise)
+5. Add LIMIT clause to prevent huge results (typically 10-50 rows)
+6. Handle potential division by zero with NULLIF()
+7. Use exact column names from the schema above
+8. For percentage calculations, multiply by 100 and round appropriately
+9. Round decimal values to 2 decimal places using ROUND()
+10. Use proper GROUP BY clauses when using aggregation functions
+11. Order results by the most relevant metric
+
+Generate ONLY the SQL query, no explanations or markdown:"""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+            temperature=0.1
+        )
         
-        # Show first few rows as sample data
-        answer += f"Sample Data (showing first 5 of {len(content)} records):\n\n"
+        sql_query = response.choices[0].message.content.strip()
         
-        for i, row in enumerate(content[:5]):
-            answer += f"{i+1}. {str(row)[:200]}...\n"
+        # Clean up the response
+        if sql_query.startswith("```sql"):
+            sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+        elif sql_query.startswith("```"):
+            sql_query = sql_query.replace("```", "").strip()
         
-        if len(content) > 5:
-            answer += f"\n... and {len(content) - 5} more records available\n"
+        logger.info(f"Generated SQL for table {project}.{dataset}.{table}: {sql_query[:100]}...")
+        return sql_query, (project, dataset, table)
         
-        answer += f"\nINSIGHTS:\n"
-        answer += f"• Data spans the requested time period\n"
-        answer += f"• Results are ordered by relevance\n"
-        answer += f"• Complete dataset available for analysis\n"
+    except Exception as e:
+        logger.error(f"SQL generation failed: {e}")
+        # Fallback to simple query
+        fallback_sql = f"""
+        SELECT *
+        FROM `{project}.{dataset}.{table}`
+        ORDER BY 1 DESC
+        LIMIT 20
+        """
+        return fallback_sql, (project, dataset, table)
+
+async def select_best_table_for_query(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
+    """Select the most relevant table for a given query using AI"""
+    if not openai_client:
+        # Fallback logic
+        question_lower = question.lower()
+        
+        for project, datasets in available_tables.items():
+            for dataset, tables in datasets.items():
+                for table in tables:
+                    if any(keyword in question_lower for keyword in ['campaign', 'ads']) and 'campaign' in table:
+                        return (project, dataset, table)
+                    elif 'performance' in question_lower and 'performance' in table:
+                        return (project, dataset, table)
+        
+        # Return first available table if no match
+        for project, datasets in available_tables.items():
+            for dataset, tables in datasets.items():
+                if tables:
+                    return (project, dataset, tables[0])
+        
+        return None
     
-    answer += f"\n---\nAnalysis based on {len(content)} records from BigQuery"
+    # Prepare table options for AI selection
+    table_options = []
+    for project, datasets in available_tables.items():
+        for dataset, tables in datasets.items():
+            for table in tables:
+                description = generate_table_description_v2(table, dataset, project)
+                table_options.append({
+                    "project": project,
+                    "dataset": dataset, 
+                    "table": table,
+                    "description": description
+                })
     
-    return answer
+    if not table_options:
+        return None
+    
+    options_text = "\n".join([
+        f"- {opt['project']}.{opt['dataset']}.{opt['table']}: {opt['description']}"
+        for opt in table_options
+    ])
+    
+    prompt = f"""Given this question: "{question}"
+
+Available tables:
+{options_text}
+
+Select the MOST RELEVANT table for answering this question. Respond with only the project.dataset.table format (e.g., "project-name.dataset-name.table-name").
+
+If the question is about campaigns, ads performance, or marketing metrics, choose ads/campaign tables.
+If it's about user behavior or analytics, choose ga4 or analytics tables.
+If it's about consolidated reporting, choose master or consolidated tables.
+
+Your response:"""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0.1
+        )
+        
+        selected = response.choices[0].message.content.strip()
+        
+        # Parse the response
+        if '.' in selected:
+            parts = selected.split('.')
+            if len(parts) == 3:
+                return tuple(parts)
+        
+    except Exception as e:
+        logger.error(f"Table selection error: {e}")
+    
+    # Fallback to first table
+    return (table_options[0]['project'], table_options[0]['dataset'], table_options[0]['table'])
+
+async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
+    """Format BigQuery results with clean, readable text formatting for chat display"""
+    
+    if not openai_client:
+        return f"Here are the BigQuery results for: {question}"
+    
+    try:
+        if not result.get('content'):
+            return f"No data found for: {question}"
+        
+        # Extract and structure the raw data
+        raw_data = []
+        for item in result['content']:
+            if isinstance(item, dict) and 'text' in item:
+                raw_data.append(item['text'])
+        
+        # Combine all raw data for analysis
+        data_text = '\n'.join(raw_data)
+        
+        # Enhanced prompt for clean, readable chat formatting
+        analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery data and provide insights in a clean, readable format for a chat interface.
+
+ORIGINAL QUESTION: {question}
+
+RAW DATA FROM BIGQUERY:
+{data_text}
+
+FORMATTING REQUIREMENTS - VERY IMPORTANT:
+1. Use ONLY plain text formatting that works in chat
+2. Use line breaks (\\n) for spacing between sections
+3. Use simple text headers like "EXECUTIVE SUMMARY:" 
+4. Use bullet points with "•" character
+5. Use numbered lists with "1.", "2.", "3."
+6. Put each major section on a new line with blank line before it
+7. NO markdown (###, **, etc.) - just plain readable text
+8. Use capital letters for emphasis instead of bold
+
+RESPONSE STRUCTURE:
+Start with executive summary, then break down key findings, then insights, then recommendations.
+
+Make this professional and easy to read in a chat interface."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            max_tokens=1000,
+            temperature=0.3
+        )
+        
+        formatted_response = response.choices[0].message.content.strip()
+        
+        # Clean up any remaining markdown
+        formatted_response = formatted_response.replace('###', '')
+        formatted_response = formatted_response.replace('**', '')
+        formatted_response = formatted_response.replace('##', '')
+        
+        # Add data source note
+        formatted_response += f"\n\n---\nAnalysis based on {len(result['content'])} records from BigQuery"
+        
+        return formatted_response
+        
+    except Exception as e:
+        logger.error(f"Response formatting error: {e}")
+        return f"Retrieved {len(result.get('content', []))} records from BigQuery for: {question}"
 
 async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
     """
     Handle table/dataset listing with consistent indentation and no descriptions
-    Version: 2.7.2.3 - HOTFIX version
+    Version: 2.7.2 - Fixed indentation formatting and removed table descriptions
     """
     try:
         # Enhanced keywords for table listing queries
@@ -515,13 +704,34 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 
                 answer += "\n"
         
-        # Add sample questions
+        # Add dynamic sample questions based on discovered tables
         answer += "SAMPLE QUESTIONS YOU CAN ASK:\n"
-        answer += "• Show me campaign performance metrics\n"
-        answer += "• What are the top performing campaigns by ROAS?\n"
-        answer += "• Give a summary about the ordered items in last week\n"
-        answer += "• Analyze keyword performance\n"
-        answer += "• Show me sales and revenue data\n"
+        
+        # Generate sample questions based on actual table names
+        sample_questions = []
+        for datasets in all_tables.values():
+            for tables in datasets.values():
+                for table in tables:
+                    if 'campaign' in table.lower():
+                        sample_questions.append("• Show me campaign performance metrics")
+                    elif 'performance' in table.lower():
+                        sample_questions.append("• What are the top performing campaigns?")
+                    elif 'keyword' in table.lower():
+                        sample_questions.append("• Analyze keyword performance")
+                    elif 'revenue' in table.lower() or 'sales' in table.lower():
+                        sample_questions.append("• Show me sales and revenue data")
+                    elif 'shipment' in table.lower():
+                        sample_questions.append("• Analyze shipping performance")
+                
+                # Limit to 5 unique sample questions
+                if len(set(sample_questions)) >= 5:
+                    break
+            if len(set(sample_questions)) >= 5:
+                break
+        
+        # Add the unique sample questions
+        for question_text in list(set(sample_questions))[:5]:
+            answer += f"{question_text}\n"
         
         return {
             "answer": answer,
@@ -533,14 +743,14 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 "cache_ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60
             },
             "processing_time": 2.0,
-            "processing_method": "deterministic_discovery_v2.7.2.3",
+            "processing_method": "dynamic_discovery_v2.7.2",
             "version": VERSION
         }
         
     except Exception as e:
         logger.error(f"Dynamic table discovery error: {e}")
         return {
-            "answer": f"I encountered an error while discovering your BigQuery resources:\n\n{str(e)}\n\nThis might be due to permissions or connection issues.",
+            "answer": f"I encountered an error while discovering your BigQuery resources:\n\n{str(e)}\n\nThis might be due to permissions or connection issues. The system is designed to automatically discover all projects, datasets, and tables, but requires proper BigQuery access.",
             "error": str(e),
             "processing_time": 0.5,
             "version": VERSION
@@ -712,67 +922,6 @@ Detailed response:"""
 
 # API Endpoints
 
-@app.get("/")
-async def root():
-    """Root endpoint with hotfix information"""
-    uptime = time.time() - start_time
-    
-    # Quick discovery summary
-    try:
-        projects = await discover_all_projects()
-        datasets = await discover_all_datasets()
-        tables = await discover_all_tables()
-        
-        discovery_summary = {
-            "projects": len(projects),
-            "datasets": sum(len(ds) for ds in datasets.values()),
-            "tables": sum(len(tbls) for ds in tables.values() for tbls in ds.values()),
-            "last_discovery": max(discovery_cache.last_discovery.values()).isoformat() if discovery_cache.last_discovery else None
-        }
-    except:
-        discovery_summary = {"status": "discovery_unavailable"}
-    
-    return {
-        "service": "Marketing Intelligence API - DETERMINISTIC HOTFIX",
-        "version": VERSION,
-        "previous_stable": PREVIOUS_STABLE_VERSION,
-        "status": "hotfix_deployed",
-        "uptime_seconds": round(uptime, 2),
-        "environment": os.getenv("ENVIRONMENT", "unknown"),
-        "discovery_summary": discovery_summary,
-        "hotfix_notes": [
-            "Eliminated AI randomness from table selection",
-            "Replaced AI SQL generation with deterministic patterns", 
-            "Fixed 'Unexpected keyword FOR' syntax errors",
-            "Ensured consistent behavior for identical queries"
-        ],
-        "features": {
-            "deterministic_table_selection": True,
-            "safe_sql_patterns": True,
-            "no_ai_randomness": True,
-            "consistent_behavior": True,
-            "table_discovery": True,
-            "simple_formatting": True
-        },
-        "endpoints": {
-            "chat": "/api/chat",
-            "unified_query": "/api/unified-query", 
-            "bigquery_test": "/api/bigquery/test",
-            "dynamic_discovery": "/api/bigquery/discover",
-            "clear_cache": "/api/bigquery/clear-cache",
-            "health": "/api/health"
-        },
-        "changelog": {
-            "v2.7.2.3": [
-                "COMPLETE HOTFIX: Eliminated all AI randomness",
-                "Deterministic table selection logic",
-                "Safe SQL patterns replace AI generation",
-                "Consistent results for identical queries",
-                "Fixed BigQuery syntax errors"
-            ]
-        }
-    }
-
 @app.post("/api/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
     """Main chat endpoint with intelligent routing"""
@@ -820,7 +969,7 @@ async def chat(request: QueryRequest):
 
 @app.post("/api/unified-query")
 async def unified_query(request: UnifiedQueryRequest):
-    """HOTFIX unified endpoint with deterministic BigQuery processing"""
+    """Enhanced unified endpoint with fully dynamic BigQuery discovery"""
     process_start = time.time()
     
     try:
@@ -854,69 +1003,74 @@ async def unified_query(request: UnifiedQueryRequest):
             }
             
         elif request.data_source == "bigquery":
-            # HOTFIX: Deterministic BigQuery processing
+            # Dynamic table query detection with fixed formatting
             table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
                 # This is a table listing query
                 processing_time = time.time() - process_start
-                table_result["processing_time"] = processing_time
-                table_result["response_style"] = request.preferred_style
-                table_result["data_source"] = "bigquery"
-                table_result["sql_query"] = None
-                return table_result
+                
+                return {
+                    **table_result,
+                    "query_type": "metadata_query",
+                    "sources_used": 1,
+                    "processing_time": processing_time,
+                    "response_style": request.preferred_style,
+                    "data_source": "bigquery",
+                    "sql_query": None
+                }
             
             else:
-                # HOTFIX: Deterministic SQL query generation
+                # Regular SQL query with dynamic table selection
                 available_tables = await discover_all_tables()
                 sql_query, table_info = await generate_sql_with_ai_dynamic(request.question, available_tables)
-                
-                logger.info(f"HOTFIX: Executing deterministic SQL: {sql_query[:100]}...")
                 result = await bigquery_mcp.execute_sql(sql_query)
                 processing_time = time.time() - process_start
                 
                 # Check if query was successful
-                if result.get("isError") or not result.get("content"):
-                    error_message = "Query execution failed"
-                    if result.get("content"):
-                        error_message = str(result["content"][:200])
+                if result.get("isError"):
+                    error_message = "Unknown error"
+                    if result.get("content") and len(result["content"]) > 0:
+                        error_content = result["content"][0]
+                        if isinstance(error_content, dict) and "text" in error_content:
+                            error_message = error_content["text"]
                     
                     return {
-                        "answer": f"Query failed on table {'.'.join(table_info)}: {error_message}",
+                        "answer": f"I encountered an error executing your BigQuery query on table {'.'.join(table_info)}. The error was: {error_message}",
                         "error": error_message,
                         "sql_query": sql_query,
                         "table_used": table_info,
-                        "query_type": "sql_error",
-                        "processing_method": "deterministic_sql_v2.7.2.3",
+                        "query_type": "quantitative_error",
+                        "processing_method": "dynamic_sql_error",
                         "sources_used": 0,
                         "processing_time": processing_time,
                         "response_style": request.preferred_style,
                         "data_source": "bigquery"
                     }
                 
-                # HOTFIX: Simple, consistent formatting
-                formatted_answer = await format_bigquery_results_simple(result, request.question, sql_query)
+                # Use enhanced Claude-style formatting
+                claude_style_answer = await format_bigquery_results_like_claude(result, request.question, sql_query)
                 
                 return {
-                    "answer": formatted_answer,
+                    "answer": claude_style_answer,
                     "data": result,
                     "sql_query": sql_query,
                     "table_used": table_info,
-                    "query_type": "data_query",
-                    "processing_method": "deterministic_sql_v2.7.2.3",
-                    "sources_used": len(result.get("content", [])),
+                    "query_type": "quantitative",
+                    "processing_method": "dynamic_table_selection_v2.7.2",
+                    "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
                     "data_source": "bigquery"
                 }
             
     except Exception as e:
-        logger.error(f"Unified query hotfix error: {e}")
+        logger.error(f"Unified query failed: {e}")
         processing_time = time.time() - process_start
         return {
-            "answer": f"Hotfix error: {str(e)}",
-            "query_type": "hotfix_error",
-            "processing_method": "error_handling",
+            "answer": f"Sorry, I encountered an error: {str(e)}",
+            "query_type": "error",
+            "processing_method": "error",
             "sources_used": 0,
             "processing_time": processing_time,
             "response_style": request.preferred_style,
@@ -948,11 +1102,10 @@ async def discover_all_resources():
             "cache_info": {
                 "ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60,
                 "last_discovery": {k: v.isoformat() for k, v in discovery_cache.last_discovery.items()}
-            },
-            "hotfix_version": VERSION
+            }
         }
     except Exception as e:
-        return {"status": "error", "error": str(e), "version": VERSION}
+        return {"status": "error", "error": str(e)}
 
 @app.post("/api/bigquery/clear-cache")
 async def clear_discovery_cache():
@@ -963,28 +1116,24 @@ async def clear_discovery_cache():
     return {
         "status": "success",
         "message": "Discovery cache cleared. Next queries will perform fresh discovery.",
-        "timestamp": datetime.now().isoformat(),
-        "version": VERSION
+        "timestamp": datetime.now().isoformat()
     }
 
 @app.get("/api/bigquery/test")
 async def test_bigquery_connection():
     """Test BigQuery MCP connection"""
     try:
-        datasets = await discover_all_datasets()
+        test_result = await bigquery_mcp.test_connection()
         return {
             "server_url": bigquery_mcp.server_url,
-            "connection_status": "healthy",
-            "datasets_found": sum(len(ds) for ds in datasets.values()),
-            "environment": os.getenv("ENVIRONMENT", "production"),
-            "version": VERSION
+            "connection_test": test_result,
+            "environment": os.getenv("ENVIRONMENT", "production")
         }
     except Exception as e:
         return {
             "server_url": bigquery_mcp.server_url,
-            "connection_status": "error",
             "error": str(e),
-            "version": VERSION
+            "status": "failed"
         }
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -992,34 +1141,44 @@ async def health_check():
     """Comprehensive health check including BigQuery MCP"""
     systems = {}
     
-    systems["hotfix_version"] = VERSION
     systems["core_modules"] = "available" if CORE_MODULES_AVAILABLE else "unavailable"
+    systems["dashboard_routes"] = "available" if DASHBOARD_AVAILABLE else "unavailable"
     
     systems["openai_key"] = "configured" if os.getenv("OPENAI_API_KEY") else "missing"
     systems["supabase_url"] = "configured" if os.getenv("SUPABASE_URL") else "missing"
     systems["supabase_key"] = "configured" if os.getenv("SUPABASE_ANON_KEY") else "missing"
     systems["google_credentials"] = "configured" if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") else "missing"
     
+    if CORE_MODULES_AVAILABLE:
+        try:
+            db_health = db.health_check()
+            systems["database"] = db_health.get("status", "unknown")
+        except Exception as e:
+            systems["database"] = f"error: {str(e)[:50]}"
+    else:
+        systems["database"] = "unavailable"
+    
     systems["openai_client"] = "available" if openai_client else "unavailable"
     systems["supabase_client"] = "available" if supabase_client else "unavailable"
     
     try:
-        datasets = await discover_all_datasets()
-        systems["bigquery_discovery"] = f"healthy ({sum(len(ds) for ds in datasets.values())} datasets)"
+        test_result = await bigquery_mcp.test_connection()
+        systems["bigquery_mcp"] = test_result.get("status", "unknown")
     except Exception as e:
-        systems["bigquery_discovery"] = f"error: {str(e)[:50]}"
+        systems["bigquery_mcp"] = f"error: {str(e)[:50]}"
     
     systems["discovery_cache"] = f"active ({len(discovery_cache.last_discovery)} cached items)"
-    systems["deterministic_sql"] = "enabled"
-    systems["ai_randomness"] = "eliminated"
     
     critical_systems = ["openai_key", "supabase_url", "supabase_key"]
     healthy_systems = sum(1 for sys in critical_systems if systems.get(sys) == "configured")
     
     if healthy_systems == len(critical_systems):
-        overall_status = "hotfix_healthy"
+        if systems.get("database") == "healthy" or systems.get("supabase_client") == "available":
+            overall_status = "healthy"
+        else:
+            overall_status = "degraded"
     else:
-        overall_status = "hotfix_degraded"
+        overall_status = "unhealthy"
     
     return HealthResponse(
         status=overall_status,
@@ -1027,6 +1186,76 @@ async def health_check():
         timestamp=datetime.now().isoformat(),
         environment=os.getenv("ENVIRONMENT", "unknown")
     )
+
+@app.get("/")
+async def root():
+    """Root endpoint with dynamic discovery information"""
+    uptime = time.time() - start_time
+    
+    # Quick discovery summary
+    try:
+        projects = await discover_all_projects()
+        datasets = await discover_all_datasets()
+        tables = await discover_all_tables()
+        
+        discovery_summary = {
+            "projects": len(projects),
+            "datasets": sum(len(ds) for ds in datasets.values()),
+            "tables": sum(len(tbls) for ds in tables.values() for tbls in ds.values()),
+            "last_discovery": max(discovery_cache.last_discovery.values()).isoformat() if discovery_cache.last_discovery else None
+        }
+    except:
+        discovery_summary = {"status": "discovery_unavailable"}
+    
+    return {
+        "service": "Marketing Intelligence API",
+        "version": VERSION,
+        "previous_stable": PREVIOUS_STABLE_VERSION,
+        "status": "running",
+        "uptime_seconds": round(uptime, 2),
+        "environment": os.getenv("ENVIRONMENT", "unknown"),
+        "discovery_summary": discovery_summary,
+        "features": {
+            "advanced_rag": CORE_MODULES_AVAILABLE,
+            "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
+            "ai_sql_generation": openai_client is not None,
+            "ai_model": "gpt-4o-mini",
+            "dynamic_discovery": True,
+            "real_time_tables": True,
+            "intelligent_table_selection": True,
+            "cache_management": True,
+            "multi_project_support": True,
+            "auto_scaling": True,
+            "quote_handling_fixed": True,
+            "clean_formatting": True  # NEW v2.7.2
+        },
+        "endpoints": {
+            "chat": "/api/chat",
+            "unified_query": "/api/unified-query", 
+            "bigquery_test": "/api/bigquery/test",
+            "dynamic_discovery": "/api/bigquery/discover",
+            "clear_cache": "/api/bigquery/clear-cache",
+            "health": "/api/health"
+        },
+        "changelog": {
+            "v2.7.2": [
+                "Fixed indentation consistency in table listings",
+                "Removed table descriptions from display",
+                "Simplified output formatting for better readability",
+                "Maintained sequential numbering across datasets"
+            ],
+            "v2.7.1": [
+                "Fixed quote handling for dataset names in MCP responses",
+                "Added proper text cleaning for all MCP JSON responses"
+            ],
+            "v2.7.0": [
+                "Fully dynamic BigQuery resource discovery",
+                "Real-time table and dataset detection",
+                "Intelligent table selection for queries",
+                "Multi-project support"
+            ]
+        }
+    }
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1039,12 +1268,13 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info(f"Starting DETERMINISTIC HOTFIX v{VERSION}")
+    logger.info(f"Starting Clean Formatting System v{VERSION}")
     logger.info(f"Server: {host}:{port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
-    logger.info(f"Hotfix: Eliminated AI randomness, deterministic SQL generation")
+    logger.info(f"Features: Dynamic discovery with clean formatting")
+    logger.info(f"Cache TTL: 5 minutes")
+    logger.info(f"Multi-project support: Enabled")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
-    logger.info(f"Features: Consistent behavior, safe SQL patterns")
     
     uvicorn.run(
         "main:app",
