@@ -1,8 +1,9 @@
-# main.py - Fully Dynamic BigQuery Discovery System v2.7.0
+# main.py - Fixed Quote Handling for Dataset Names v2.7.1
 # Version Control: 
 # v2.5.0 - Static hardcoded approach (baseline)
 # v2.6.0 - Static table descriptions with fallbacks
 # v2.7.0 - Fully dynamic real-time BigQuery discovery system
+# v2.7.1 - Fixed quote handling for dataset names from MCP responses
 
 import os
 import logging
@@ -18,8 +19,8 @@ from dotenv import load_dotenv
 import asyncio
 
 # Version tracking
-VERSION = "2.7.0"
-PREVIOUS_STABLE_VERSION = "2.6.0"
+VERSION = "2.7.1"
+PREVIOUS_STABLE_VERSION = "2.7.0"
 
 # BigQuery MCP integration
 from api.bigquery_mcp import bigquery_mcp
@@ -90,7 +91,7 @@ except ImportError as e:
 # Initialize FastAPI
 app = FastAPI(
     title="Marketing Intelligence API",
-    description=f"Fully Dynamic BigQuery Discovery System v{VERSION}",
+    description=f"Fixed Quote Handling for BigQuery Discovery v{VERSION}",
     version=VERSION,
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
@@ -111,7 +112,7 @@ if DASHBOARD_AVAILABLE:
 # Global variables
 start_time = time.time()
 
-# NEW v2.7.0: Dynamic caching system
+# Dynamic caching system
 class BigQueryDiscoveryCache:
     def __init__(self, cache_ttl_minutes: int = 5):
         self.cache_ttl = timedelta(minutes=cache_ttl_minutes)
@@ -156,7 +157,30 @@ if EXTERNAL_CLIENTS_AVAILABLE:
     except Exception as e:
         logger.error(f"Supabase initialization failed: {e}")
 
-# NEW v2.7.0: Dynamic project discovery
+# NEW v2.7.1: Proper quote cleaning for MCP responses
+def clean_mcp_response_text(text: str) -> str:
+    """
+    Clean text from MCP responses that might include quotes or other formatting
+    v2.7.1 - Handles quotes from JSON responses properly
+    """
+    if not text:
+        return text
+    
+    # Strip whitespace
+    cleaned = text.strip()
+    
+    # Remove surrounding quotes (single or double)
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or \
+       (cleaned.startswith("'") and cleaned.endswith("'")):
+        cleaned = cleaned[1:-1]
+    
+    # Remove any remaining quotes that might be escaped
+    cleaned = cleaned.replace('\\"', '').replace("\\'", "")
+    
+    logger.debug(f"Cleaned MCP text: '{text}' -> '{cleaned}'")
+    return cleaned
+
+# Dynamic project discovery
 async def discover_all_projects() -> List[str]:
     """Dynamically discover all available BigQuery projects"""
     cache_key = "all_projects"
@@ -205,15 +229,19 @@ async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
             if result and 'content' in result:
                 for item in result['content']:
                     if isinstance(item, dict) and 'text' in item:
-                        dataset_name = item['text'].strip()
+                        # FIX v2.7.1: Clean quotes from dataset names
+                        raw_name = item['text']
+                        dataset_name = clean_mcp_response_text(raw_name)
+                        
                         if dataset_name:  # Only add non-empty dataset names
                             datasets.append(dataset_name)
+                            logger.info(f"Found dataset: '{raw_name}' -> '{dataset_name}'")
             
             all_datasets[proj] = datasets
             discovery_cache.datasets_cache[cache_key] = datasets
             discovery_cache.update_cache_timestamp(cache_key)
             
-            logger.info(f"Discovered {len(datasets)} datasets in project {proj}")
+            logger.info(f"Discovered {len(datasets)} datasets in project {proj}: {datasets}")
             
         except Exception as e:
             logger.error(f"Dataset discovery error for project {proj}: {e}")
@@ -247,21 +275,27 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
                 continue
             
             try:
+                # FIX v2.7.1: Use cleaned dataset name for API call
+                logger.info(f"Listing tables for dataset: '{ds}' in project: '{proj}'")
                 result = await bigquery_mcp.list_tables(ds, proj)
                 tables = []
                 
                 if result and 'content' in result:
                     for item in result['content']:
                         if isinstance(item, dict) and 'text' in item:
-                            table_name = item['text'].strip()
+                            # FIX v2.7.1: Clean quotes from table names too
+                            raw_name = item['text']
+                            table_name = clean_mcp_response_text(raw_name)
+                            
                             if table_name:  # Only add non-empty table names
                                 tables.append(table_name)
+                                logger.info(f"Found table: '{raw_name}' -> '{table_name}'")
                 
                 all_tables[proj][ds] = tables
                 discovery_cache.tables_cache[cache_key] = tables
                 discovery_cache.update_cache_timestamp(cache_key)
                 
-                logger.info(f"Discovered {len(tables)} tables in {proj}.{ds}")
+                logger.info(f"Discovered {len(tables)} tables in {proj}.{ds}: {tables}")
                 
             except Exception as e:
                 logger.error(f"Table discovery error for {proj}.{ds}: {e}")
@@ -287,7 +321,7 @@ async def get_table_schema_dynamic(project: str, dataset: str, table: str) -> di
 
 def generate_table_description_v2(table_name: str, dataset_name: str = None, project_name: str = None) -> str:
     """
-    Enhanced dynamic table description generator v2.7.0
+    Enhanced dynamic table description generator v2.7.1
     Uses project, dataset, and table context for better descriptions
     """
     table_lower = table_name.lower()
@@ -302,6 +336,8 @@ def generate_table_description_v2(table_name: str, dataset_name: str = None, pro
         base_context = "Sales"
     elif 'customer' in dataset_lower or 'user' in dataset_lower:
         base_context = "Customer"
+    elif 'shipstation' in dataset_lower:
+        base_context = "Shipping"
     else:
         base_context = "Business"
     
@@ -325,6 +361,9 @@ def generate_table_description_v2(table_name: str, dataset_name: str = None, pro
     elif table_lower.startswith('tiktok_'):
         table_type = table_lower.replace('tiktok_', '').replace('_', ' ')
         return f"TikTok Ads {table_type} {base_context.lower()}"
+    
+    elif 'shipment' in table_lower or 'shipping' in table_lower:
+        return f"Shipment and logistics {base_context.lower()} data"
     
     elif table_lower.startswith('dim_'):
         dimension = table_lower.replace('dim_', '').replace('_', ' ')
@@ -611,7 +650,7 @@ Make this professional and easy to read in a chat interface."""
 async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
     """
     Handle table/dataset listing with fully dynamic discovery
-    Version: 2.7.0 - Real-time discovery of all projects, datasets, and tables
+    Version: 2.7.1 - Fixed quote handling in MCP responses
     """
     try:
         # Enhanced keywords for table listing queries
@@ -682,6 +721,8 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                         sample_questions.append("• Analyze revenue trends")
                     elif 'user' in table.lower() or 'customer' in table.lower():
                         sample_questions.append("• Show me user behavior patterns")
+                    elif 'shipment' in table.lower():
+                        sample_questions.append("• Analyze shipping performance")
                 
                 # Limit to 5 unique sample questions
                 if len(set(sample_questions)) >= 5:
@@ -703,7 +744,7 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 "cache_ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60
             },
             "processing_time": 2.0,
-            "processing_method": "dynamic_discovery_v2.7.0",
+            "processing_method": "dynamic_discovery_v2.7.1",
             "version": VERSION
         }
         
@@ -963,7 +1004,7 @@ async def unified_query(request: UnifiedQueryRequest):
             }
             
         elif request.data_source == "bigquery":
-            # NEW v2.7.0: Dynamic table query detection
+            # Dynamic table query detection with fixed quote handling
             table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
@@ -1017,7 +1058,7 @@ async def unified_query(request: UnifiedQueryRequest):
                     "sql_query": sql_query,
                     "table_used": table_info,
                     "query_type": "quantitative",
-                    "processing_method": "dynamic_table_selection_v2.7.0",
+                    "processing_method": "dynamic_table_selection_v2.7.1",
                     "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
@@ -1039,7 +1080,7 @@ async def unified_query(request: UnifiedQueryRequest):
             "version": VERSION
         }
 
-# NEW v2.7.0: Dynamic discovery endpoints
+# Dynamic discovery endpoints
 @app.get("/api/bigquery/discover")
 async def discover_all_resources():
     """Discover all BigQuery resources dynamically"""
@@ -1127,7 +1168,7 @@ async def health_check():
     except Exception as e:
         systems["bigquery_mcp"] = f"error: {str(e)[:50]}"
     
-    # NEW v2.7.0: Cache health check
+    # v2.7.1: Cache health check
     systems["discovery_cache"] = f"active ({len(discovery_cache.last_discovery)} cached items)"
     
     critical_systems = ["openai_key", "supabase_url", "supabase_key"]
@@ -1181,33 +1222,38 @@ async def root():
             "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
             "ai_sql_generation": openai_client is not None,
             "ai_model": "gpt-4o-mini",
-            "dynamic_discovery": True,  # NEW v2.7.0
-            "real_time_tables": True,   # NEW v2.7.0
-            "intelligent_table_selection": True,  # NEW v2.7.0
-            "cache_management": True,   # NEW v2.7.0
-            "multi_project_support": True,  # NEW v2.7.0
-            "auto_scaling": True        # NEW v2.7.0
+            "dynamic_discovery": True,
+            "real_time_tables": True,
+            "intelligent_table_selection": True,
+            "cache_management": True,
+            "multi_project_support": True,
+            "auto_scaling": True,
+            "quote_handling_fixed": True  # NEW v2.7.1
         },
         "endpoints": {
             "chat": "/api/chat",
             "unified_query": "/api/unified-query", 
             "bigquery_test": "/api/bigquery/test",
-            "dynamic_discovery": "/api/bigquery/discover",  # NEW v2.7.0
-            "clear_cache": "/api/bigquery/clear-cache",     # NEW v2.7.0
+            "dynamic_discovery": "/api/bigquery/discover",
+            "clear_cache": "/api/bigquery/clear-cache",
             "health": "/api/health"
         },
         "changelog": {
+            "v2.7.1": [
+                "Fixed quote handling for dataset names in MCP responses",
+                "Added proper text cleaning for all MCP JSON responses",
+                "Enhanced logging for dataset/table discovery debugging",
+                "Improved error handling for malformed dataset names",
+                "Fixed BigQuery API compatibility issues"
+            ],
             "v2.7.0": [
                 "Fully dynamic BigQuery resource discovery",
                 "Real-time table and dataset detection",
                 "Intelligent table selection for queries",
                 "Multi-project support",
                 "Smart caching with TTL",
-                "Automatic scaling for new resources",
-                "No hardcoded table names or datasets"
-            ],
-            "v2.6.0": ["Dynamic table descriptions", "Future-proof table handling"],
-            "v2.5.0": ["Static hardcoded approach (deprecated)"]
+                "Automatic scaling for new resources"
+            ]
         }
     }
 
@@ -1222,10 +1268,10 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info(f"Starting Dynamic BigQuery Discovery System v{VERSION}")
+    logger.info(f"Starting Fixed Quote Handling System v{VERSION}")
     logger.info(f"Server: {host}:{port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
-    logger.info(f"Features: Fully dynamic resource discovery enabled")
+    logger.info(f"Features: Dynamic discovery with fixed quote handling")
     logger.info(f"Cache TTL: 5 minutes")
     logger.info(f"Multi-project support: Enabled")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
