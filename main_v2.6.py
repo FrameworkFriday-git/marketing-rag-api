@@ -1,10 +1,9 @@
-# main.py - Fixed Indentation and Clean Table Listing v2.7.2
+# main.py - Fixed Quote Handling for Dataset Names v2.7.1
 # Version Control: 
 # v2.5.0 - Static hardcoded approach (baseline)
 # v2.6.0 - Static table descriptions with fallbacks
 # v2.7.0 - Fully dynamic real-time BigQuery discovery system
 # v2.7.1 - Fixed quote handling for dataset names from MCP responses
-# v2.7.2 - Fixed indentation and removed table descriptions
 
 import os
 import logging
@@ -20,8 +19,8 @@ from dotenv import load_dotenv
 import asyncio
 
 # Version tracking
-VERSION = "2.7.2"
-PREVIOUS_STABLE_VERSION = "2.7.1"
+VERSION = "2.7.1"
+PREVIOUS_STABLE_VERSION = "2.7.0"
 
 # BigQuery MCP integration
 from api.bigquery_mcp import bigquery_mcp
@@ -92,7 +91,7 @@ except ImportError as e:
 # Initialize FastAPI
 app = FastAPI(
     title="Marketing Intelligence API",
-    description=f"Fixed Indentation and Clean Table Listing v{VERSION}",
+    description=f"Fixed Quote Handling for BigQuery Discovery v{VERSION}",
     version=VERSION,
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
@@ -158,11 +157,11 @@ if EXTERNAL_CLIENTS_AVAILABLE:
     except Exception as e:
         logger.error(f"Supabase initialization failed: {e}")
 
-# Quote cleaning for MCP responses
+# NEW v2.7.1: Proper quote cleaning for MCP responses
 def clean_mcp_response_text(text: str) -> str:
     """
     Clean text from MCP responses that might include quotes or other formatting
-    v2.7.2 - Handles quotes from JSON responses properly
+    v2.7.1 - Handles quotes from JSON responses properly
     """
     if not text:
         return text
@@ -230,7 +229,7 @@ async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
             if result and 'content' in result:
                 for item in result['content']:
                     if isinstance(item, dict) and 'text' in item:
-                        # Clean quotes from dataset names
+                        # FIX v2.7.1: Clean quotes from dataset names
                         raw_name = item['text']
                         dataset_name = clean_mcp_response_text(raw_name)
                         
@@ -276,7 +275,7 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
                 continue
             
             try:
-                # Use cleaned dataset name for API call
+                # FIX v2.7.1: Use cleaned dataset name for API call
                 logger.info(f"Listing tables for dataset: '{ds}' in project: '{proj}'")
                 result = await bigquery_mcp.list_tables(ds, proj)
                 tables = []
@@ -284,7 +283,7 @@ async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[
                 if result and 'content' in result:
                     for item in result['content']:
                         if isinstance(item, dict) and 'text' in item:
-                            # Clean quotes from table names too
+                            # FIX v2.7.1: Clean quotes from table names too
                             raw_name = item['text']
                             table_name = clean_mcp_response_text(raw_name)
                             
@@ -322,7 +321,7 @@ async def get_table_schema_dynamic(project: str, dataset: str, table: str) -> di
 
 def generate_table_description_v2(table_name: str, dataset_name: str = None, project_name: str = None) -> str:
     """
-    Enhanced dynamic table description generator v2.7.2
+    Enhanced dynamic table description generator v2.7.1
     Uses project, dataset, and table context for better descriptions
     """
     table_lower = table_name.lower()
@@ -650,8 +649,8 @@ Make this professional and easy to read in a chat interface."""
 
 async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
     """
-    Handle table/dataset listing with consistent indentation and no descriptions
-    Version: 2.7.2 - Fixed indentation formatting and removed table descriptions
+    Handle table/dataset listing with fully dynamic discovery
+    Version: 2.7.1 - Fixed quote handling in MCP responses
     """
     try:
         # Enhanced keywords for table listing queries
@@ -680,7 +679,7 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
             for tables in datasets.values()
         )
         
-        # Create comprehensive response with consistent formatting
+        # Create comprehensive response
         answer = f"I discovered {len(projects)} projects with {total_datasets} datasets and {total_tables} tables. Here's what's available:\n\n"
         
         table_counter = 1
@@ -689,17 +688,17 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
             if not datasets:
                 continue
                 
-            answer += f"PROJECT: {project}\n\n"
+            answer += f"PROJECT: {project}\n"
             
             for dataset, tables in datasets.items():
                 if not tables:
                     continue
                     
-                answer += f"Dataset: {dataset} ({len(tables)} tables)\n\n"
+                answer += f"\n  Dataset: {dataset} ({len(tables)} tables)\n"
                 
                 for table in tables:
-                    # FIXED v2.7.2: Consistent indentation, no descriptions
-                    answer += f"{table_counter}. {table}\n"
+                    description = generate_table_description_v2(table, dataset, project)
+                    answer += f"  {table_counter}. {table}\n     {description}\n"
                     table_counter += 1
                 
                 answer += "\n"
@@ -707,7 +706,7 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
         # Add dynamic sample questions based on discovered tables
         answer += "SAMPLE QUESTIONS YOU CAN ASK:\n"
         
-        # Generate sample questions based on actual table names
+        # Generate dynamic sample questions based on actual table names
         sample_questions = []
         for datasets in all_tables.values():
             for tables in datasets.values():
@@ -716,10 +715,12 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                         sample_questions.append("• Show me campaign performance metrics")
                     elif 'performance' in table.lower():
                         sample_questions.append("• What are the top performing campaigns?")
-                    elif 'keyword' in table.lower():
-                        sample_questions.append("• Analyze keyword performance")
+                    elif 'conversion' in table.lower():
+                        sample_questions.append("• Compare conversion rates by device")
                     elif 'revenue' in table.lower() or 'sales' in table.lower():
-                        sample_questions.append("• Show me sales and revenue data")
+                        sample_questions.append("• Analyze revenue trends")
+                    elif 'user' in table.lower() or 'customer' in table.lower():
+                        sample_questions.append("• Show me user behavior patterns")
                     elif 'shipment' in table.lower():
                         sample_questions.append("• Analyze shipping performance")
                 
@@ -730,8 +731,8 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 break
         
         # Add the unique sample questions
-        for question_text in list(set(sample_questions))[:5]:
-            answer += f"{question_text}\n"
+        for question in list(set(sample_questions))[:5]:
+            answer += f"{question}\n"
         
         return {
             "answer": answer,
@@ -743,7 +744,7 @@ async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
                 "cache_ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60
             },
             "processing_time": 2.0,
-            "processing_method": "dynamic_discovery_v2.7.2",
+            "processing_method": "dynamic_discovery_v2.7.1",
             "version": VERSION
         }
         
@@ -1003,7 +1004,7 @@ async def unified_query(request: UnifiedQueryRequest):
             }
             
         elif request.data_source == "bigquery":
-            # Dynamic table query detection with fixed formatting
+            # Dynamic table query detection with fixed quote handling
             table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
@@ -1057,7 +1058,7 @@ async def unified_query(request: UnifiedQueryRequest):
                     "sql_query": sql_query,
                     "table_used": table_info,
                     "query_type": "quantitative",
-                    "processing_method": "dynamic_table_selection_v2.7.2",
+                    "processing_method": "dynamic_table_selection_v2.7.1",
                     "sources_used": 1,
                     "processing_time": processing_time,
                     "response_style": request.preferred_style,
@@ -1167,6 +1168,7 @@ async def health_check():
     except Exception as e:
         systems["bigquery_mcp"] = f"error: {str(e)[:50]}"
     
+    # v2.7.1: Cache health check
     systems["discovery_cache"] = f"active ({len(discovery_cache.last_discovery)} cached items)"
     
     critical_systems = ["openai_key", "supabase_url", "supabase_key"]
@@ -1226,8 +1228,7 @@ async def root():
             "cache_management": True,
             "multi_project_support": True,
             "auto_scaling": True,
-            "quote_handling_fixed": True,
-            "clean_formatting": True  # NEW v2.7.2
+            "quote_handling_fixed": True  # NEW v2.7.1
         },
         "endpoints": {
             "chat": "/api/chat",
@@ -1238,21 +1239,20 @@ async def root():
             "health": "/api/health"
         },
         "changelog": {
-            "v2.7.2": [
-                "Fixed indentation consistency in table listings",
-                "Removed table descriptions from display",
-                "Simplified output formatting for better readability",
-                "Maintained sequential numbering across datasets"
-            ],
             "v2.7.1": [
                 "Fixed quote handling for dataset names in MCP responses",
-                "Added proper text cleaning for all MCP JSON responses"
+                "Added proper text cleaning for all MCP JSON responses",
+                "Enhanced logging for dataset/table discovery debugging",
+                "Improved error handling for malformed dataset names",
+                "Fixed BigQuery API compatibility issues"
             ],
             "v2.7.0": [
                 "Fully dynamic BigQuery resource discovery",
                 "Real-time table and dataset detection",
                 "Intelligent table selection for queries",
-                "Multi-project support"
+                "Multi-project support",
+                "Smart caching with TTL",
+                "Automatic scaling for new resources"
             ]
         }
     }
@@ -1268,10 +1268,10 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info(f"Starting Clean Formatting System v{VERSION}")
+    logger.info(f"Starting Fixed Quote Handling System v{VERSION}")
     logger.info(f"Server: {host}:{port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
-    logger.info(f"Features: Dynamic discovery with clean formatting")
+    logger.info(f"Features: Dynamic discovery with fixed quote handling")
     logger.info(f"Cache TTL: 5 minutes")
     logger.info(f"Multi-project support: Enabled")
     logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
