@@ -1046,42 +1046,50 @@ async def get_consolidated_summary():
         WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
         """
         
+        # Execute raw SQL directly via MCP (bypass SOLID AI template matching)
         result = await bigquery_mcp.execute_sql(query)
         
         if result.get("isError") or not result.get("content"):
+            logger.error(f"Query execution failed: {result}")
             raise Exception("Query execution failed")
         
-        # Parse the result - FIXED: Handle the actual MCP response format
-        if result["content"]:
+        # Parse the result - Handle single aggregated row
+        if result["content"] and len(result["content"]) > 0:
             try:
-                # Extract the first item which contains the aggregated result
+                # Get the first (and only) result row
                 data_item = result["content"][0]
+                
                 if isinstance(data_item, dict) and "text" in data_item:
                     # Parse the JSON string from the text field
-                    data_text = data_item["text"]
-                    row_data = json.loads(data_text)
+                    row_data = json.loads(data_item["text"])
+                    logger.info(f"Parsed aggregation data: {row_data}")
                     
                     summary = {
-                        "total_stores": row_data.get("total_stores", 0),
-                        "total_days": row_data.get("total_days", 0),
-                        "total_users": row_data.get("total_users", 0),
-                        "total_sessions": row_data.get("total_sessions", 0),
-                        "total_transactions": row_data.get("total_transactions", 0),
+                        "total_stores": int(row_data.get("total_stores", 0)),
+                        "total_days": int(row_data.get("total_days", 0)),
+                        "total_users": int(row_data.get("total_users", 0)),
+                        "total_sessions": int(row_data.get("total_sessions", 0)),
+                        "total_transactions": int(row_data.get("total_transactions", 0)),
                         "total_revenue": float(row_data.get("total_revenue", 0) or 0),
                         "avg_conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
                         "avg_bounce_rate": float(row_data.get("avg_bounce_rate", 0) or 0),
-                        "total_new_users": row_data.get("total_new_users", 0),
-                        "total_add_to_carts": row_data.get("total_add_to_carts", 0)
+                        "total_new_users": int(row_data.get("total_new_users", 0)),
+                        "total_add_to_carts": int(row_data.get("total_add_to_carts", 0))
                     }
+                    logger.info(f"Dashboard summary generated successfully: {summary}")
                     return summary
                     
             except json.JSONDecodeError as parse_error:
                 logger.error(f"JSON parse error: {parse_error}")
-                logger.error(f"Raw data: {data_item}")
+                logger.error(f"Raw response content: {result['content']}")
             except Exception as parse_error:
                 logger.error(f"Data processing error: {parse_error}")
+                logger.error(f"Raw response: {result}")
         
-        # Fallback response
+        # Enhanced fallback with debugging info
+        logger.warning("Using fallback data - no valid aggregated results found")
+        logger.info(f"Raw result structure: {result}")
+        
         return {
             "total_stores": 0,
             "total_days": 0,
@@ -1093,13 +1101,18 @@ async def get_consolidated_summary():
             "avg_bounce_rate": 0.0,
             "total_new_users": 0,
             "total_add_to_carts": 0,
-            "note": "Using fallback data - check BigQuery connection"
+            "note": "Using fallback data - aggregation query may have failed",
+            "debug_info": {
+                "result_has_content": bool(result.get("content")),
+                "content_length": len(result.get("content", [])),
+                "query_executed": query[:100] + "..."
+            }
         }
             
     except Exception as e:
         logger.error(f"Dashboard summary error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Dashboard error: {str(e)}")
-
+    
 @app.get("/api/dashboard/consolidated/by-store")
 async def get_consolidated_by_store():
     """Get performance metrics grouped by online store (Last 4 weeks)"""
