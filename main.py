@@ -1051,32 +1051,35 @@ async def get_consolidated_summary():
         if result.get("isError") or not result.get("content"):
             raise Exception("Query execution failed")
         
-        # Parse the result
+        # Parse the result - FIXED: Handle the actual MCP response format
         if result["content"]:
-            # Extract data from MCP response
-            data_text = result["content"][0].get("text", "")
-            if data_text:
-                try:
-                    # Parse the JSON response from BigQuery
-                    data_rows = json.loads(data_text) if isinstance(data_text, str) else data_text
+            try:
+                # Extract the first item which contains the aggregated result
+                data_item = result["content"][0]
+                if isinstance(data_item, dict) and "text" in data_item:
+                    # Parse the JSON string from the text field
+                    data_text = data_item["text"]
+                    row_data = json.loads(data_text)
                     
-                    if isinstance(data_rows, list) and len(data_rows) > 0:
-                        row = data_rows[0]
-                        summary = {
-                            "total_stores": row.get("total_stores", 0),
-                            "total_days": row.get("total_days", 0),
-                            "total_users": row.get("total_users", 0),
-                            "total_sessions": row.get("total_sessions", 0),
-                            "total_transactions": row.get("total_transactions", 0),
-                            "total_revenue": float(row.get("total_revenue", 0) or 0),
-                            "avg_conversion_rate": float(row.get("avg_conversion_rate", 0) or 0),
-                            "avg_bounce_rate": float(row.get("avg_bounce_rate", 0) or 0),
-                            "total_new_users": row.get("total_new_users", 0),
-                            "total_add_to_carts": row.get("total_add_to_carts", 0)
-                        }
-                        return summary
-                except Exception as parse_error:
-                    logger.error(f"Parse error: {parse_error}")
+                    summary = {
+                        "total_stores": row_data.get("total_stores", 0),
+                        "total_days": row_data.get("total_days", 0),
+                        "total_users": row_data.get("total_users", 0),
+                        "total_sessions": row_data.get("total_sessions", 0),
+                        "total_transactions": row_data.get("total_transactions", 0),
+                        "total_revenue": float(row_data.get("total_revenue", 0) or 0),
+                        "avg_conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
+                        "avg_bounce_rate": float(row_data.get("avg_bounce_rate", 0) or 0),
+                        "total_new_users": row_data.get("total_new_users", 0),
+                        "total_add_to_carts": row_data.get("total_add_to_carts", 0)
+                    }
+                    return summary
+                    
+            except json.JSONDecodeError as parse_error:
+                logger.error(f"JSON parse error: {parse_error}")
+                logger.error(f"Raw data: {data_item}")
+            except Exception as parse_error:
+                logger.error(f"Data processing error: {parse_error}")
         
         # Fallback response
         return {
