@@ -1,4 +1,4 @@
-# api/bigquery_mcp.py - Enhanced for Dashboard Support
+# api/bigquery_mcp.py
 import asyncio
 import json
 import aiohttp
@@ -16,7 +16,7 @@ class SimpleBigQueryMCP:
     async def get_session(self):
         """Get or create aiohttp session"""
         if self.session is None or self.session.closed:
-            timeout = aiohttp.ClientTimeout(total=60)  # Increased timeout for dashboard queries
+            timeout = aiohttp.ClientTimeout(total=30)
             self.session = aiohttp.ClientSession(timeout=timeout)
         return self.session
 
@@ -47,15 +47,12 @@ class SimpleBigQueryMCP:
             ) as response:
                 
                 if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"HTTP {response.status}: {error_text}")
+                    raise Exception(f"HTTP {response.status}: {await response.text()}")
                 
                 response_data = await response.json()
                 
                 if "error" in response_data:
-                    error_msg = response_data['error'].get('message', 'Unknown error')
-                    logger.error(f"MCP Error for {tool_name}: {error_msg}")
-                    raise Exception(f"MCP Error: {error_msg}")
+                    raise Exception(f"MCP Error: {response_data['error'].get('message', 'Unknown error')}")
                 
                 return response_data.get("result", {})
                 
@@ -65,20 +62,19 @@ class SimpleBigQueryMCP:
 
     async def execute_sql(self, sql: str, dry_run: bool = False) -> dict:
         """Execute SQL query via MCP"""
-        logger.info(f"Executing SQL: {sql[:100]}...")
         return await self.call_tool("execute_sql", {
             "sql": sql,
             "dry_run": dry_run
         })
 
-    async def list_dataset_ids(self, project: str = None) -> dict:
+    async def list_datasets(self, project: str = None) -> dict:
         """List BigQuery datasets"""
         params = {}
         if project:
             params["project"] = project
         return await self.call_tool("list_dataset_ids", params)
 
-    async def list_table_ids(self, dataset: str, project: str = None) -> dict:
+    async def list_tables(self, dataset: str, project: str = None) -> dict:
         """List tables in a dataset"""
         params = {"dataset": dataset}
         if project:
@@ -99,15 +95,6 @@ class SimpleBigQueryMCP:
             params["project"] = project
         return await self.call_tool("get_dataset_info", params)
 
-    # Legacy method names for backward compatibility
-    async def list_datasets(self, project: str = None) -> dict:
-        """List BigQuery datasets - Legacy method"""
-        return await self.list_dataset_ids(project)
-
-    async def list_tables(self, dataset: str, project: str = None) -> dict:
-        """List tables in a dataset - Legacy method"""
-        return await self.list_table_ids(dataset, project)
-
     async def test_connection(self) -> dict:
         """Test if BigQuery MCP is working"""
         try:
@@ -120,34 +107,6 @@ class SimpleBigQueryMCP:
         except Exception as e:
             return {
                 "status": "failed", 
-                "error": str(e),
-                "server_url": self.server_url
-            }
-
-    async def test_dashboard_queries(self) -> dict:
-        """Test dashboard-specific queries"""
-        try:
-            # Test consolidated table access
-            test_query = "SELECT COUNT(*) as row_count FROM `data-tables-for-zoho.new_data_tables.consolidated_master` LIMIT 1"
-            result = await self.execute_sql(test_query)
-            
-            if result.get("isError"):
-                return {
-                    "status": "failed",
-                    "error": "Cannot access consolidated_master table",
-                    "details": result
-                }
-            
-            return {
-                "status": "dashboard_ready",
-                "consolidated_table": "accessible",
-                "test_result": result,
-                "server_url": self.server_url
-            }
-            
-        except Exception as e:
-            return {
-                "status": "failed",
                 "error": str(e),
                 "server_url": self.server_url
             }
