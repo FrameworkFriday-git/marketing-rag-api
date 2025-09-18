@@ -1113,6 +1113,8 @@ async def get_consolidated_summary():
         logger.error(f"Dashboard summary error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Dashboard error: {str(e)}")
     
+# Replace these functions in your main.py
+
 @app.get("/api/dashboard/consolidated/by-store")
 async def get_consolidated_by_store():
     """Get performance metrics grouped by online store (Last 4 weeks)"""
@@ -1141,29 +1143,28 @@ async def get_consolidated_by_store():
         
         store_data = []
         
-        # Parse MCP response
+        # Parse MCP response - Handle multiple JSON objects
         if result["content"]:
-            data_text = result["content"][0].get("text", "")
-            if data_text:
-                try:
-                    data_rows = json.loads(data_text) if isinstance(data_text, str) else data_text
-                    
-                    if isinstance(data_rows, list):
-                        for row in data_rows:
-                            store_data.append({
-                                "store": row.get("online_store", "Unknown"),
-                                "users": row.get("total_users", 0),
-                                "sessions": row.get("total_sessions", 0),
-                                "transactions": row.get("total_transactions", 0),
-                                "revenue": float(row.get("total_revenue", 0) or 0),
-                                "conversion_rate": float(row.get("avg_conversion_rate", 0) or 0),
-                                "bounce_rate": float(row.get("avg_bounce_rate", 0) or 0),
-                                "new_users": row.get("total_new_users", 0),
-                                "pageviews": row.get("total_pageviews", 0)
-                            })
-                except Exception as parse_error:
-                    logger.error(f"Store data parse error: {parse_error}")
+            try:
+                for item in result["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        row_data = json.loads(item["text"])
+                        store_data.append({
+                            "store": row_data.get("online_store", "Unknown"),
+                            "users": int(row_data.get("total_users", 0)),
+                            "sessions": int(row_data.get("total_sessions", 0)),
+                            "transactions": int(row_data.get("total_transactions", 0)),
+                            "revenue": float(row_data.get("total_revenue", 0) or 0),
+                            "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
+                            "bounce_rate": float(row_data.get("avg_bounce_rate", 0) or 0),
+                            "new_users": int(row_data.get("total_new_users", 0)),
+                            "pageviews": int(row_data.get("total_pageviews", 0))
+                        })
+            except Exception as parse_error:
+                logger.error(f"Store data parse error: {parse_error}")
+                return {"stores": [], "error": f"Parse error: {str(parse_error)}"}
         
+        logger.info(f"Store data parsed successfully: {len(store_data)} stores")
         return {"stores": store_data}
         
     except Exception as e:
@@ -1197,28 +1198,27 @@ async def get_consolidated_by_channel():
         
         channel_data = []
         
-        # Parse MCP response
+        # Parse MCP response - Handle multiple JSON objects
         if result["content"]:
-            data_text = result["content"][0].get("text", "")
-            if data_text:
-                try:
-                    data_rows = json.loads(data_text) if isinstance(data_text, str) else data_text
-                    
-                    if isinstance(data_rows, list):
-                        for row in data_rows:
-                            channel_data.append({
-                                "channel": row.get("Channel_group", "Unknown"),
-                                "users": row.get("total_users", 0),
-                                "sessions": row.get("total_sessions", 0),
-                                "transactions": row.get("total_transactions", 0),
-                                "revenue": float(row.get("total_revenue", 0) or 0),
-                                "conversion_rate": float(row.get("avg_conversion_rate", 0) or 0),
-                                "bounce_rate": float(row.get("avg_bounce_rate", 0) or 0),
-                                "add_to_carts": row.get("total_add_to_carts", 0)
-                            })
-                except Exception as parse_error:
-                    logger.error(f"Channel data parse error: {parse_error}")
+            try:
+                for item in result["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        row_data = json.loads(item["text"])
+                        channel_data.append({
+                            "channel": row_data.get("Channel_group", "Unknown"),
+                            "users": int(row_data.get("total_users", 0)),
+                            "sessions": int(row_data.get("total_sessions", 0)),
+                            "transactions": int(row_data.get("total_transactions", 0)),
+                            "revenue": float(row_data.get("total_revenue", 0) or 0),
+                            "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
+                            "bounce_rate": float(row_data.get("avg_bounce_rate", 0) or 0),
+                            "add_to_carts": int(row_data.get("total_add_to_carts", 0))
+                        })
+            except Exception as parse_error:
+                logger.error(f"Channel data parse error: {parse_error}")
+                return {"channels": [], "error": f"Parse error: {str(parse_error)}"}
         
+        logger.info(f"Channel data parsed successfully: {len(channel_data)} channels")
         return {"channels": channel_data}
         
     except Exception as e:
@@ -1251,34 +1251,34 @@ async def get_consolidated_time_series():
         
         time_series_data = []
         
-        # Parse MCP response
+        # Parse MCP response - Handle multiple JSON objects
         if result["content"]:
-            data_text = result["content"][0].get("text", "")
-            if data_text:
-                try:
-                    data_rows = json.loads(data_text) if isinstance(data_text, str) else data_text
-                    
-                    if isinstance(data_rows, list):
-                        for row in data_rows:
-                            # Handle date formatting
-                            date_value = row.get("Date")
-                            if isinstance(date_value, str):
-                                formatted_date = date_value
-                            else:
-                                formatted_date = str(date_value)
-                            
-                            time_series_data.append({
-                                "date": formatted_date,
-                                "users": row.get("daily_users", 0),
-                                "sessions": row.get("daily_sessions", 0),
-                                "transactions": row.get("daily_transactions", 0),
-                                "revenue": float(row.get("daily_revenue", 0) or 0),
-                                "conversion_rate": float(row.get("avg_conversion_rate", 0) or 0),
-                                "new_users": row.get("daily_new_users", 0)
-                            })
-                except Exception as parse_error:
-                    logger.error(f"Time series data parse error: {parse_error}")
+            try:
+                for item in result["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        row_data = json.loads(item["text"])
+                        
+                        # Handle date formatting
+                        date_value = row_data.get("Date")
+                        if isinstance(date_value, str):
+                            formatted_date = date_value
+                        else:
+                            formatted_date = str(date_value)
+                        
+                        time_series_data.append({
+                            "date": formatted_date,
+                            "users": int(row_data.get("daily_users", 0)),
+                            "sessions": int(row_data.get("daily_sessions", 0)),
+                            "transactions": int(row_data.get("daily_transactions", 0)),
+                            "revenue": float(row_data.get("daily_revenue", 0) or 0),
+                            "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
+                            "new_users": int(row_data.get("daily_new_users", 0))
+                        })
+            except Exception as parse_error:
+                logger.error(f"Time series data parse error: {parse_error}")
+                return {"time_series": [], "error": f"Parse error: {str(parse_error)}"}
         
+        logger.info(f"Time series data parsed successfully: {len(time_series_data)} days")
         return {"time_series": time_series_data}
         
     except Exception as e:
@@ -1313,25 +1313,24 @@ async def get_channel_summary():
         channel_summary = []
         
         if result["content"]:
-            data_text = result["content"][0].get("text", "")
-            if data_text:
-                try:
-                    data_rows = json.loads(data_text) if isinstance(data_text, str) else data_text
-                    
-                    if isinstance(data_rows, list):
-                        for row in data_rows:
-                            channel_summary.append({
-                                "channel": row.get("Channel_group", "Unknown"),
-                                "users": row.get("users", 0),
-                                "sessions": row.get("sessions", 0),
-                                "avg_session_duration": float(row.get("avg_session_duration", 0) or 0),
-                                "bounce_rate": float(row.get("bounce_rate", 0) or 0),
-                                "sessions_per_user_percent": float(row.get("sessions_per_user", 0) or 0) * 100,
-                                "avg_conversion_rate": float(row.get("avg_conversion_rate", 0) or 0)
-                            })
-                except Exception as parse_error:
-                    logger.error(f"Channel summary parse error: {parse_error}")
+            try:
+                for item in result["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        row_data = json.loads(item["text"])
+                        channel_summary.append({
+                            "channel": row_data.get("Channel_group", "Unknown"),
+                            "users": int(row_data.get("users", 0)),
+                            "sessions": int(row_data.get("sessions", 0)),
+                            "avg_session_duration": float(row_data.get("avg_session_duration", 0) or 0),
+                            "bounce_rate": float(row_data.get("bounce_rate", 0) or 0),
+                            "sessions_per_user_percent": float(row_data.get("sessions_per_user", 0) or 0) * 100,
+                            "avg_conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0)
+                        })
+            except Exception as parse_error:
+                logger.error(f"Channel summary parse error: {parse_error}")
+                return {"channel_summary": [], "error": f"Parse error: {str(parse_error)}"}
         
+        logger.info(f"Channel summary parsed successfully: {len(channel_summary)} channels")
         return {"channel_summary": channel_summary}
         
     except Exception as e:
