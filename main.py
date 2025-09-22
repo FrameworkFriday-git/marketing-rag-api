@@ -1641,7 +1641,7 @@ async def unified_query(request: UnifiedQueryRequest):
             table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
-                # This is a table listing query
+                # This is a table listing query - measure time here
                 processing_time = time.time() - process_start
                 table_result["processing_time"] = processing_time
                 table_result["response_style"] = request.preferred_style
@@ -1651,15 +1651,24 @@ async def unified_query(request: UnifiedQueryRequest):
             
             else:
                 # Enhanced Dynamic System: Fully dynamic SQL generation
+                logger.info(f"Enhanced Dynamic System: Starting table discovery...")
+                discovery_start = time.time()
                 available_tables = await discover_all_tables()
+                logger.info(f"Table discovery took: {time.time() - discovery_start:.2f}s")
+                
+                logger.info(f"Enhanced Dynamic System: Starting SQL generation...")
+                sql_gen_start = time.time()
                 sql_query, table_info = await generate_sql_with_ai_dynamic_enhanced(request.question, available_tables)
+                logger.info(f"SQL generation took: {time.time() - sql_gen_start:.2f}s")
                 
                 logger.info(f"Enhanced Dynamic System: Executing SQL: {sql_query[:100]}...")
+                sql_exec_start = time.time()
                 result = await bigquery_mcp.execute_sql(sql_query)
-                processing_time = time.time() - process_start
+                logger.info(f"SQL execution took: {time.time() - sql_exec_start:.2f}s")
                 
                 # Check if query was successful
                 if result.get("isError") or not result.get("content"):
+                    processing_time = time.time() - process_start
                     error_message = "Query execution failed"
                     if result.get("content"):
                         error_message = str(result["content"][:200])
@@ -1678,7 +1687,14 @@ async def unified_query(request: UnifiedQueryRequest):
                     }
                 
                 # Enhanced Dynamic System: Better formatting
+                logger.info(f"Enhanced Dynamic System: Starting response formatting...")
+                format_start = time.time()
                 formatted_answer = await format_bigquery_results_like_claude(result, request.question, sql_query)
+                logger.info(f"Response formatting took: {time.time() - format_start:.2f}s")
+                
+                # Calculate final processing time
+                processing_time = time.time() - process_start
+                logger.info(f"Total processing time: {processing_time:.2f}s")
                 
                 return {
                     "answer": formatted_answer,
@@ -1694,8 +1710,9 @@ async def unified_query(request: UnifiedQueryRequest):
                 }
             
     except Exception as e:
-        logger.error(f"Unified query Enhanced Dynamic error: {e}")
         processing_time = time.time() - process_start
+        logger.error(f"Unified query Enhanced Dynamic error: {e}")
+        logger.error(f"Error occurred after {processing_time:.2f}s")
         return {
             "answer": f"Enhanced Dynamic System error: {str(e)}",
             "query_type": "enhanced_dynamic_error",
@@ -1864,4 +1881,4 @@ if __name__ == "__main__":
         port=port,
         reload=os.getenv("ENVIRONMENT") == "development",
         log_level="info"
-    )
+    ),
