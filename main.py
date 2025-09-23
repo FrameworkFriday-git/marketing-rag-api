@@ -573,7 +573,7 @@ class DynamicSQLGenerator:
         fallback_sql = f"""
         SELECT *
         FROM `{project}.{dataset}.{table}`
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         ORDER BY date DESC
         LIMIT 20
         """
@@ -638,7 +638,7 @@ COLUMN TYPES:
 - Text: {', '.join(string_cols)}
 
 REQUIREMENTS:
-1. Use 4-week rolling window: WHERE {date_cols[0] if date_cols else 'date'} >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+1. Use 4-week rolling window: WHERE {date_cols[0] if date_cols else 'date'} >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
 2. Use appropriate aggregations for the question
 3. Include LIMIT clause (10-50 rows)
 4. Use CAST() for numeric operations
@@ -692,7 +692,7 @@ Generate ONLY the SQL query, no explanations."""
         return f"""
         SELECT {select_clause}
         FROM {table_name}
-        WHERE {date_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE {date_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         ORDER BY {date_col} DESC
         LIMIT 20
         """
@@ -791,7 +791,7 @@ async def generate_sql_with_ai_dynamic_enhanced(question: str, available_tables:
             fallback_sql = f"""
             SELECT *
             FROM `{project}.{dataset}.{table}`
-            WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+            WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
             ORDER BY date DESC
             LIMIT 20
             """
@@ -1186,7 +1186,7 @@ async def get_consolidated_summary():
             SUM(New_users) as total_new_users,
             SUM(Add_To_Carts) as total_add_to_carts
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         """
         
         # Execute raw SQL directly via MCP (bypass SOLID AI template matching)
@@ -1272,7 +1272,7 @@ async def get_consolidated_by_store():
             SUM(New_users) as total_new_users,
             SUM(Pageviews) as total_pageviews
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY online_store
         ORDER BY total_revenue DESC
         """
@@ -1307,7 +1307,7 @@ async def get_consolidated_by_channel():
             AVG(Bounce_rate) as avg_bounce_rate,
             SUM(Add_To_Carts) as total_add_to_carts
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY Channel_group
         ORDER BY total_revenue DESC
         """
@@ -1360,7 +1360,7 @@ async def get_consolidated_time_series():
             AVG(Conversion_rate) as avg_conversion_rate,
             SUM(New_users) as daily_new_users
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY Date
         ORDER BY Date ASC
         """
@@ -1420,7 +1420,7 @@ async def get_channel_summary():
             ROUND((SUM(Sessions) / NULLIF(SUM(Users), 0)), 2) as sessions_per_user,
             ROUND(AVG(Conversion_rate), 2) as avg_conversion_rate
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
           AND Channel_group IS NOT NULL
         GROUP BY Channel_group
         ORDER BY sessions DESC
