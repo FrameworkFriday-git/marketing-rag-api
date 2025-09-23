@@ -1457,7 +1457,47 @@ async def get_channel_summary():
     except Exception as e:
         logger.error(f"Channel summary error: {str(e)}")
         return {"channel_summary": [], "error": str(e)}
-
+@app.get("/api/dashboard/consolidated/new-users-by-channel")
+async def get_new_users_by_channel():
+    """Get new users by channel for the same 4-week time period"""
+    try:
+        query = """
+        SELECT 
+            Channel_group,
+            SUM(New_users) as total_new_users
+        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
+          AND Channel_group IS NOT NULL
+        GROUP BY Channel_group
+        ORDER BY total_new_users DESC
+        """
+        
+        result = await bigquery_mcp.execute_sql(query)
+        
+        if result.get("isError") or not result.get("content"):
+            return {"new_users_by_channel": [], "error": "Query execution failed"}
+        
+        new_users_data = []
+        if result["content"]:
+            try:
+                for item in result["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        row_data = json.loads(item["text"])
+                        new_users_data.append({
+                            "channel": row_data.get("Channel_group", "Unknown"),
+                            "new_users": int(row_data.get("total_new_users", 0))
+                        })
+            except Exception as parse_error:
+                logger.error(f"New users data parse error: {parse_error}")
+                return {"new_users_by_channel": [], "error": f"Parse error: {str(parse_error)}"}
+        
+        logger.info(f"New users by channel parsed successfully: {len(new_users_data)} channels")
+        return {"new_users_by_channel": new_users_data}
+        
+    except Exception as e:
+        logger.error(f"New users by channel error: {str(e)}")
+        return {"new_users_by_channel": [], "error": str(e)}
+    
 # Keep all your existing API endpoints with modifications for enhanced system
 @app.get("/")
 async def root():
