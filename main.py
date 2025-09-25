@@ -1,13 +1,8 @@
-# main.py - SOLID AI SQL Generation v2.8.0 - Enhanced Dynamic System
+# main.py - FIXED SOLID AI SQL Generation v3.2.0 - Enhanced with Fixed Intelligent Query Integration
 # Version Control: 
-# v2.5.0 - Static hardcoded approach (baseline)
-# v2.6.0 - Static table descriptions with fallbacks
-# v2.7.0 - Fully dynamic real-time BigQuery discovery system
-# v2.7.1 - Fixed quote handling for dataset names from MCP responses
-# v2.7.2 - Fixed indentation and removed table descriptions
-# v2.7.3 - SOLID AI: Deterministic patterns + enhanced AI safety
-# v2.7.4 - Added consolidated dashboard endpoints with 4-week rolling window
-# v2.8.0 - Enhanced Dynamic System: MCP-powered schema discovery, GPT-4o upgrade, zero hardcoding
+# v3.0.0 - Enhanced Table Selection: Intelligent platform detection, account name matching, plural forms support
+# v3.1.0 - Integrated Intelligent Query Generation with Enhanced MCP
+# v3.2.0 - FIXED: Platform matching, schema analysis, intelligent SQL generation, join detection
 
 import os
 import logging
@@ -15,7 +10,7 @@ import time
 import json
 import re
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Literal, List, Any, Tuple
@@ -23,11 +18,11 @@ from dotenv import load_dotenv
 import asyncio
 
 # Version tracking
-VERSION = "2.8.0"
-PREVIOUS_STABLE_VERSION = "2.7.4"
+VERSION = "3.2.0"
+PREVIOUS_STABLE_VERSION = "3.1.0"
 
-# BigQuery MCP integration
-from api.bigquery_mcp import bigquery_mcp
+# Enhanced BigQuery MCP integration - FIXED VERSION
+from api.enhanced_bigquery_mcp import intelligent_bigquery_mcp
 
 # Request models
 class UnifiedQueryRequest(BaseModel):
@@ -39,6 +34,16 @@ class QueryRequest(BaseModel):
     question: str
     preferred_style: Optional[str] = "standard"
     context: Optional[str] = None
+
+class IntelligentQueryRequest(BaseModel):
+    query: str
+    context: Optional[Dict[str, Any]] = None
+    force_discovery: Optional[bool] = False
+
+class SQLGenerationRequest(BaseModel):
+    query: str
+    tables_context: Optional[Dict[str, Any]] = None
+    generate_sql: bool = True
 
 # Response models
 class QueryResponse(BaseModel):
@@ -55,7 +60,6 @@ class HealthResponse(BaseModel):
     timestamp: str
     environment: str
 
-# Dashboard response models
 class DashboardSummary(BaseModel):
     total_stores: int
     total_days: int
@@ -107,8 +111,8 @@ except ImportError as e:
 
 # Initialize FastAPI
 app = FastAPI(
-    title="Marketing Intelligence API - Enhanced Dynamic System",
-    description=f"Enhanced Dynamic AI SQL Generation v{VERSION}",
+    title="Marketing Intelligence API - FIXED Enhanced Dynamic System v3.2",
+    description=f"FIXED Enhanced Dynamic AI SQL Generation with Intelligent Query Generation v{VERSION}",
     version=VERSION,
     docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
 )
@@ -128,29 +132,6 @@ if DASHBOARD_AVAILABLE:
 
 # Global variables
 start_time = time.time()
-
-# Dynamic caching system
-class BigQueryDiscoveryCache:
-    def __init__(self, cache_ttl_minutes: int = 5):
-        self.cache_ttl = timedelta(minutes=cache_ttl_minutes)
-        self.projects_cache = {}
-        self.datasets_cache = {}
-        self.tables_cache = {}
-        self.schema_cache = {}
-        self.last_discovery = {}
-        
-    def is_cache_valid(self, cache_key: str) -> bool:
-        """Check if cache is still valid"""
-        if cache_key not in self.last_discovery:
-            return False
-        return datetime.now() - self.last_discovery[cache_key] < self.cache_ttl
-    
-    def update_cache_timestamp(self, cache_key: str):
-        """Update cache timestamp"""
-        self.last_discovery[cache_key] = datetime.now()
-
-# Initialize cache
-discovery_cache = BigQueryDiscoveryCache(cache_ttl_minutes=5)
 
 # Initialize external clients
 openai_client = None
@@ -174,633 +155,366 @@ if EXTERNAL_CLIENTS_AVAILABLE:
     except Exception as e:
         logger.error(f"Supabase initialization failed: {e}")
 
-# Quote cleaning for MCP responses
-def clean_mcp_response_text(text: str) -> str:
+# ENHANCED INTELLIGENT QUERY GENERATION ENDPOINTS
+
+@app.post("/api/intelligent/discover-tables")
+async def discover_relevant_tables(request: IntelligentQueryRequest):
     """
-    Clean text from MCP responses that might include quotes or other formatting
-    v2.7.2 - Handles quotes from JSON responses properly
+    FIXED: Discover tables with enhanced platform matching and relevance scoring.
+    
+    Example queries:
+    - "Microsoft Ads clicks for last 30 days" -> Should find MSAds tables
+    - "Google Ads spend by campaign" -> Should find GAds tables  
+    - "Facebook ad performance" -> Should find Facebook tables
     """
-    if not text:
-        return text
-    
-    # Strip whitespace
-    cleaned = text.strip()
-    
-    # Remove surrounding quotes (single or double)
-    if (cleaned.startswith('"') and cleaned.endswith('"')) or \
-       (cleaned.startswith("'") and cleaned.endswith("'")):
-        cleaned = cleaned[1:-1]
-    
-    # Remove any remaining quotes that might be escaped
-    cleaned = cleaned.replace('\\"', '').replace("\\'", "")
-    
-    logger.debug(f"Cleaned MCP text: '{text}' -> '{cleaned}'")
-    return cleaned
-
-# Dynamic project discovery
-async def discover_all_projects() -> List[str]:
-    """Dynamically discover all available BigQuery projects"""
-    cache_key = "all_projects"
-    
-    if discovery_cache.is_cache_valid(cache_key) and cache_key in discovery_cache.projects_cache:
-        return discovery_cache.projects_cache[cache_key]
-    
     try:
-        # Get projects from environment or default
-        default_project = os.getenv("GOOGLE_CLOUD_PROJECT", "data-tables-for-zoho")
+        logger.info(f"FIXED Discovery for query: {request.query}")
         
-        # In a real implementation, you might query for accessible projects
-        # For now, we'll use the configured project
-        projects = [default_project]
+        # Force discovery if requested
+        if request.force_discovery:
+            await intelligent_bigquery_mcp.discover_and_cache_metadata(force_refresh=True)
         
-        discovery_cache.projects_cache[cache_key] = projects
-        discovery_cache.update_cache_timestamp(cache_key)
+        # Enhanced table discovery with fixed scoring
+        discovery_result = await intelligent_bigquery_mcp.intelligent_table_discovery(request.query)
         
-        logger.info(f"Discovered projects: {projects}")
-        return projects
-        
-    except Exception as e:
-        logger.error(f"Project discovery error: {e}")
-        return ["data-tables-for-zoho"]  # fallback
-
-async def discover_all_datasets(project: str = None) -> Dict[str, List[str]]:
-    """Dynamically discover all datasets across all projects"""
-    if not project:
-        projects = await discover_all_projects()
-    else:
-        projects = [project]
-    
-    all_datasets = {}
-    
-    for proj in projects:
-        cache_key = f"datasets_{proj}"
-        
-        if discovery_cache.is_cache_valid(cache_key) and cache_key in discovery_cache.datasets_cache:
-            all_datasets[proj] = discovery_cache.datasets_cache[cache_key]
-            continue
-        
-        try:
-            result = await bigquery_mcp.list_dataset_ids(proj)
-            datasets = []
-            
-            if result and 'content' in result:
-                for item in result['content']:
-                    if isinstance(item, str):
-                        # Clean quotes from dataset names
-                        dataset_name = clean_mcp_response_text(item)
-                        
-                        if dataset_name:  # Only add non-empty dataset names
-                            datasets.append(dataset_name)
-                            logger.info(f"Found dataset: '{item}' -> '{dataset_name}'")
-                    elif isinstance(item, dict) and 'text' in item:
-                        # Handle dict format
-                        raw_name = item['text']
-                        dataset_name = clean_mcp_response_text(raw_name)
-                        
-                        if dataset_name:
-                            datasets.append(dataset_name)
-                            logger.info(f"Found dataset: '{raw_name}' -> '{dataset_name}'")
-            
-            all_datasets[proj] = datasets
-            discovery_cache.datasets_cache[cache_key] = datasets
-            discovery_cache.update_cache_timestamp(cache_key)
-            
-            logger.info(f"Discovered {len(datasets)} datasets in project {proj}: {datasets}")
-            
-        except Exception as e:
-            logger.error(f"Dataset discovery error for project {proj}: {e}")
-            all_datasets[proj] = []
-    
-    return all_datasets
-
-async def discover_all_tables(project: str = None, dataset: str = None) -> Dict[str, Dict[str, List[str]]]:
-    """Dynamically discover all tables across all datasets and projects"""
-    if project and dataset:
-        # Specific project/dataset request
-        projects_datasets = {project: [dataset]}
-    elif project:
-        # Specific project, all datasets
-        datasets = await discover_all_datasets(project)
-        projects_datasets = datasets
-    else:
-        # All projects, all datasets
-        projects_datasets = await discover_all_datasets()
-    
-    all_tables = {}
-    
-    for proj, datasets in projects_datasets.items():
-        all_tables[proj] = {}
-        
-        for ds in datasets:
-            cache_key = f"tables_{proj}_{ds}"
-            
-            if discovery_cache.is_cache_valid(cache_key) and cache_key in discovery_cache.tables_cache:
-                all_tables[proj][ds] = discovery_cache.tables_cache[cache_key]
-                continue
-            
-            try:
-                # Use cleaned dataset name for API call
-                logger.info(f"Listing tables for dataset: '{ds}' in project: '{proj}'")
-                result = await bigquery_mcp.list_table_ids(ds, proj)
-                tables = []
-                
-                if result and 'content' in result:
-                    for item in result['content']:
-                        if isinstance(item, str):
-                            # Clean quotes from table names too
-                            table_name = clean_mcp_response_text(item)
-                            
-                            if table_name:  # Only add non-empty table names
-                                tables.append(table_name)
-                                logger.info(f"Found table: '{item}' -> '{table_name}'")
-                        elif isinstance(item, dict) and 'text' in item:
-                            # Handle dict format
-                            raw_name = item['text']
-                            table_name = clean_mcp_response_text(raw_name)
-                            
-                            if table_name:
-                                tables.append(table_name)
-                                logger.info(f"Found table: '{raw_name}' -> '{table_name}'")
-                
-                all_tables[proj][ds] = tables
-                discovery_cache.tables_cache[cache_key] = tables
-                discovery_cache.update_cache_timestamp(cache_key)
-                
-                logger.info(f"Discovered {len(tables)} tables in {proj}.{ds}: {tables}")
-                
-            except Exception as e:
-                logger.error(f"Table discovery error for {proj}.{ds}: {e}")
-                all_tables[proj][ds] = []
-    
-    return all_tables
-
-async def get_table_schema_dynamic(project: str, dataset: str, table: str) -> dict:
-    """Get table schema with dynamic caching"""
-    cache_key = f"schema_{project}_{dataset}_{table}"
-    
-    if discovery_cache.is_cache_valid(cache_key) and cache_key in discovery_cache.schema_cache:
-        return discovery_cache.schema_cache[cache_key]
-    
-    try:
-        schema = await bigquery_mcp.get_table_info(dataset, table, project)
-        discovery_cache.schema_cache[cache_key] = schema
-        discovery_cache.update_cache_timestamp(cache_key)
-        return schema
-    except Exception as e:
-        logger.error(f"Schema retrieval error for {project}.{dataset}.{table}: {e}")
-        return {}
-
-# ENHANCED DYNAMIC SYSTEM - v2.8.0
-
-class IntelligentTableSelector:
-    """Dynamically selects the best table based on question analysis and schema inspection"""
-    
-    def __init__(self):
-        self.question_patterns = {
-            'campaign': ['campaign', 'campaigns', 'roas', 'ad performance', 'advertising'],
-            'account': ['account', 'accounts', 'account level', 'overall performance'],
-            'ad_group': ['ad group', 'ad groups', 'adgroup', 'adgroups'],
-            'keyword': ['keyword', 'keywords', 'search terms', 'queries'],
-            'ads': ['ads', 'ad creative', 'ad copy', 'individual ads'],
-            'geographic': ['location', 'geography', 'region', 'country', 'state'],
-            'consolidated': ['consolidated', 'master', 'dashboard', 'summary', 'overview'],
-            'orders': ['order', 'orders', 'purchase', 'transactions', 'items'],
-            'analytics': ['ga4', 'google analytics', 'analytics', 'traffic']
+        return {
+            "success": True,
+            "query": request.query,
+            "discovery": discovery_result,
+            "platform_detected": discovery_result.get('query_intent', {}).get('primary_platform'),
+            "confidence_scores": [(t['table_name'], t['relevance_score']) for t in discovery_result.get('relevant_tables', [])[:5]],
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
         }
-    
-    async def select_best_tables(self, question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> List[Tuple[str, str, str]]:
-        """Intelligently select multiple candidate tables and rank them"""
-        question_lower = question.lower()
-        
-        # Analyze question intent
-        question_type = self._analyze_question_intent(question_lower)
-        
-        # Find all potentially relevant tables
-        candidate_tables = []
-        
-        for project, datasets in available_tables.items():
-            for dataset, tables in datasets.items():
-                for table in tables:
-                    relevance_score = self._calculate_table_relevance(table, question_type, question_lower)
-                    if relevance_score > 0:
-                        candidate_tables.append((project, dataset, table, relevance_score))
-        
-        # Sort by relevance score (highest first)
-        candidate_tables.sort(key=lambda x: x[3], reverse=True)
-        
-        # Return top 3 candidates (without the score)
-        return [(proj, ds, table) for proj, ds, table, _ in candidate_tables[:3]]
-    
-    def _analyze_question_intent(self, question: str) -> List[str]:
-        """Analyze question to determine intent categories"""
-        intents = []
-        
-        for intent, keywords in self.question_patterns.items():
-            if any(keyword in question for keyword in keywords):
-                intents.append(intent)
-        
-        return intents if intents else ['general']
-    
-    def _calculate_table_relevance(self, table_name: str, question_intents: List[str], question: str) -> float:
-        """Calculate how relevant a table is for the given question"""
-        table_lower = table_name.lower()
-        score = 0.0
-        
-        # Intent-based scoring
-        for intent in question_intents:
-            if intent in table_lower:
-                score += 3.0
-            elif any(keyword in table_lower for keyword in self.question_patterns.get(intent, [])):
-                score += 2.0
-        
-        # Specific keyword matching
-        question_words = question.split()
-        for word in question_words:
-            if len(word) > 3 and word in table_lower:
-                score += 1.0
-        
-        # Prefer more specific tables over general ones
-        if 'daily' in table_lower or 'report' in table_lower:
-            score += 0.5
-        
-        return score
-
-class DynamicSchemaAnalyzer:
-    """Analyzes table schemas to generate appropriate SQL using MCP"""
-    
-    async def analyze_table_schema(self, project: str, dataset: str, table: str) -> Dict:
-        """Get and analyze table schema with multiple dynamic approaches"""
-        
-        # Method 1: Try MCP get_table_info (your existing method)
-        try:
-            schema_info = await get_table_schema_dynamic(project, dataset, table)
-            
-            if schema_info and 'content' in schema_info and schema_info['content']:
-                schema_text = schema_info['content'][0].get('text', '')
-                
-                if schema_text:
-                    schema_data = json.loads(schema_text)
-                    columns = []
-                    
-                    for field in schema_data.get('Schema', []):
-                        columns.append({
-                            'name': field.get('Name', ''),
-                            'type': field.get('Type', ''),
-                            'required': field.get('Required', False)
-                        })
-                    
-                    logger.info(f"MCP schema discovery successful for {table}")
-                    return {
-                        'table_name': f"`{project}.{dataset}.{table}`",
-                        'columns': columns,
-                        'column_names': [col['name'] for col in columns],
-                        'numeric_columns': [col['name'] for col in columns if col['type'] in ['INTEGER', 'FLOAT', 'FLOAT64', 'INT64', 'NUMERIC']],
-                        'date_columns': [col['name'] for col in columns if col['type'] in ['DATE', 'DATETIME', 'TIMESTAMP']],
-                        'string_columns': [col['name'] for col in columns if col['type'] in ['STRING', 'TEXT']],
-                        'discovery_method': 'mcp_table_info'
-                    }
-                    
-        except Exception as e:
-            logger.warning(f"MCP table info failed for {table}: {e}")
-        
-        # Method 2: Try INFORMATION_SCHEMA query (completely dynamic)
-        logger.info(f"Falling back to INFORMATION_SCHEMA for {table}")
-        return await self._get_dynamic_schema_via_query(project, dataset, table)
-    
-    async def _get_dynamic_schema_via_query(self, project: str, dataset: str, table: str) -> Dict:
-        """Get schema dynamically by querying INFORMATION_SCHEMA - truly dynamic approach"""
-        try:
-            # Use MCP to query BigQuery's INFORMATION_SCHEMA to get actual column info
-            schema_query = f"""
-            SELECT 
-                column_name,
-                data_type,
-                is_nullable
-            FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS`
-            WHERE table_name = '{table}'
-            ORDER BY ordinal_position
-            LIMIT 50
-            """
-            
-            result = await bigquery_mcp.execute_sql(schema_query)
-            
-            if result.get("isError") or not result.get("content"):
-                raise Exception("Schema query failed")
-            
-            # Parse the schema results
-            columns = []
-            numeric_columns = []
-            date_columns = []
-            string_columns = []
-            
-            for item in result["content"]:
-                if isinstance(item, dict) and "text" in item:
-                    row_data = json.loads(item["text"])
-                    
-                    col_name = row_data.get("column_name", "")
-                    data_type = row_data.get("data_type", "").upper()
-                    
-                    if col_name:
-                        columns.append(col_name)
-                        
-                        # Categorize by data type
-                        if data_type in ['INTEGER', 'INT64', 'FLOAT', 'FLOAT64', 'NUMERIC']:
-                            numeric_columns.append(col_name)
-                        elif data_type in ['DATE', 'DATETIME', 'TIMESTAMP']:
-                            date_columns.append(col_name)
-                        elif data_type in ['STRING', 'TEXT']:
-                            string_columns.append(col_name)
-            
-            logger.info(f"Dynamic schema discovery found {len(columns)} columns for {table}")
-            
-            return {
-                'table_name': f"`{project}.{dataset}.{table}`",
-                'columns': [{'name': col, 'type': 'UNKNOWN'} for col in columns],
-                'column_names': columns,
-                'numeric_columns': numeric_columns,
-                'date_columns': date_columns,
-                'string_columns': string_columns,
-                'discovery_method': 'information_schema'
-            }
-            
-        except Exception as e:
-            logger.error(f"Dynamic schema discovery failed for {table}: {e}")
-            # Return minimal info - no assumptions
-            return {
-                'table_name': f"`{project}.{dataset}.{table}`",
-                'column_names': [],
-                'numeric_columns': [],
-                'date_columns': [],
-                'string_columns': [],
-                'discovery_method': 'failed'
-            }
-
-class DynamicSQLGenerator:
-    """Generates SQL dynamically based on question analysis and schema"""
-    
-    def __init__(self):
-        self.table_selector = IntelligentTableSelector()
-        self.schema_analyzer = DynamicSchemaAnalyzer()
-    
-    async def generate_sql(self, question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> Tuple[str, Tuple[str, str, str]]:
-        """Generate SQL completely dynamically"""
-        
-        # Step 1: Select best candidate tables
-        candidate_tables = await self.table_selector.select_best_tables(question, available_tables)
-        
-        if not candidate_tables:
-            raise Exception("No suitable tables found for the query")
-        
-        # Step 2: Try each candidate table until we get good SQL
-        for project, dataset, table in candidate_tables:
-            try:
-                # Get schema information
-                schema_info = await self.schema_analyzer.analyze_table_schema(project, dataset, table)
-                
-                # Generate SQL for this table
-                sql_query = await self._generate_sql_for_table(question, schema_info)
-                
-                if sql_query and len(sql_query.strip()) > 20:  # Basic validation
-                    logger.info(f"Generated SQL for {project}.{dataset}.{table}")
-                    return sql_query, (project, dataset, table)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to generate SQL for {project}.{dataset}.{table}: {e}")
-                continue
-        
-        # If all candidates fail, use the first one with a basic fallback
-        project, dataset, table = candidate_tables[0]
-        fallback_sql = f"""
-        SELECT *
-        FROM `{project}.{dataset}.{table}`
-        WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-        ORDER BY date DESC
-        LIMIT 20
-        """
-        
-        return fallback_sql.strip(), (project, dataset, table)
-    
-    async def _generate_sql_for_table(self, question: str, schema_info: Dict) -> str:
-        """Generate SQL for a specific table using AI with enhanced context"""
-        
-        if not openai_client:
-            return self._generate_basic_sql(question, schema_info)
-        
-        # Create rich context for AI
-        context = self._build_sql_context(question, schema_info)
-        
-        try:
-            response = openai_client.chat.completions.create(
-                model="gpt-4o",  # Upgraded model as requested
-                messages=[
-                    {"role": "system", "content": self._get_enhanced_system_prompt()},
-                    {"role": "user", "content": context}
-                ],
-                max_tokens=500,
-                temperature=0,  # Deterministic
-                seed=42  # Fixed seed
-            )
-            
-            sql_query = response.choices[0].message.content.strip()
-            
-            # Clean and validate
-            sql_query = self._clean_sql(sql_query)
-            
-            if self._validate_sql_safety(sql_query):
-                return sql_query
-            else:
-                logger.warning("Generated SQL failed safety validation")
-                return self._generate_basic_sql(question, schema_info)
-                
-        except Exception as e:
-            logger.error(f"AI SQL generation failed: {e}")
-            return self._generate_basic_sql(question, schema_info)
-    
-    def _build_sql_context(self, question: str, schema_info: Dict) -> str:
-        """Build rich context for SQL generation"""
-        
-        table_name = schema_info['table_name']
-        columns = schema_info.get('column_names', [])
-        numeric_cols = schema_info.get('numeric_columns', [])
-        date_cols = schema_info.get('date_columns', [])
-        string_cols = schema_info.get('string_columns', [])
-        
-        context = f"""
-QUESTION: {question}
-
-TABLE: {table_name}
-
-AVAILABLE COLUMNS: {', '.join(columns)}
-
-COLUMN TYPES:
-- Numeric: {', '.join(numeric_cols)}
-- Date: {', '.join(date_cols)}
-- Text: {', '.join(string_cols)}
-
-REQUIREMENTS:
-1. Use 4-week rolling window: WHERE {date_cols[0] if date_cols else 'date'} >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-2. Use appropriate aggregations for the question
-3. Include LIMIT clause (10-50 rows)
-4. Use CAST() for numeric operations
-5. Use NULLIF() for divisions to prevent errors
-6. Order results meaningfully
-
-Generate a BigQuery SQL query that answers the question using only the available columns:
-"""
-        
-        return context
-    
-    def _get_enhanced_system_prompt(self) -> str:
-        """Enhanced system prompt for better SQL generation"""
-        return """You are an expert BigQuery SQL analyst. Generate safe, efficient SQL queries.
-
-CRITICAL RULES:
-1. Only use SELECT statements with WHERE, GROUP BY, ORDER BY, LIMIT
-2. Always include date filtering for 4-week window
-3. Use proper CAST() functions for numeric operations
-4. Use NULLIF() to prevent division by zero
-5. Always add meaningful ORDER BY and LIMIT clauses
-6. Focus on answering the business question directly
-7. Use only the columns that exist in the provided schema
-8. For ROAS calculations: conversions_value / NULLIF(spend, 0)
-9. For rates/percentages: multiply by 100 and use ROUND()
-10. Group by appropriate dimensions
-
-FORBIDDEN:
-- Subqueries unless absolutely necessary
-- Complex window functions
-- INSERT, UPDATE, DELETE statements
-- Non-existent column names
-
-Generate ONLY the SQL query, no explanations."""
-    
-    def _generate_basic_sql(self, question: str, schema_info: Dict) -> str:
-        """Generate basic SQL when AI is not available"""
-        table_name = schema_info['table_name']
-        columns = schema_info.get('column_names', [])
-        date_cols = schema_info.get('date_columns', [])
-        
-        date_col = date_cols[0] if date_cols else 'date'
-        
-        # Basic query structure
-        if len(columns) <= 5:
-            select_clause = "*"
-        else:
-            # Select first 5 columns
-            select_clause = ", ".join(columns[:5])
-        
-        return f"""
-        SELECT {select_clause}
-        FROM {table_name}
-        WHERE {date_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-        ORDER BY {date_col} DESC
-        LIMIT 20
-        """
-    
-    def _clean_sql(self, sql: str) -> str:
-        """Clean and format SQL"""
-        # Remove code blocks
-        if '```sql' in sql:
-            sql = sql.split('```sql')[1].split('```')[0]
-        elif '```' in sql:
-            sql = sql.split('```')[1]
-        
-        return sql.strip()
-    
-    def _validate_sql_safety(self, sql: str) -> bool:
-        """Validate SQL for safety"""
-        sql_upper = sql.upper()
-        
-        # Check for forbidden operations
-        forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'TRUNCATE', 'FOR ', 'WHILE ']
-        
-        if any(word in sql_upper for word in forbidden):
-            return False
-        
-        # Must have basic structure
-        if not ('SELECT' in sql_upper and 'FROM' in sql_upper):
-            return False
-        
-        return True
-
-# Enhanced dashboard parsing function
-def fix_dashboard_parsing(result: dict) -> list:
-    """Enhanced parsing for dashboard endpoints to handle store names correctly"""
-    parsed_data = []
-    
-    if not result.get("content"):
-        return parsed_data
-    
-    for item in result["content"]:
-        if isinstance(item, dict) and "text" in item:
-            try:
-                row_data = json.loads(item["text"])
-                
-                # Extract store name with multiple fallbacks
-                store_name = (
-                    row_data.get("online_store") or 
-                    row_data.get("store") or 
-                    row_data.get("Store_ID") or 
-                    row_data.get("account_name") or 
-                    "Unknown Store"
-                )
-                
-                parsed_data.append({
-                    "online_store": store_name,  # Use the extracted name
-                    "revenue": float(row_data.get("total_revenue", 0) or 0),
-                    "users": int(row_data.get("total_users", 0)),
-                    "sessions": int(row_data.get("total_sessions", 0)),
-                    "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
-                    **row_data  # Include all other fields
-                })
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parse error: {e}")
-                continue
-    
-    return parsed_data
-
-# Replace the main SQL generation function
-async def generate_sql_with_ai_dynamic_enhanced(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
-    """
-    Enhanced SOLID AI: Fully dynamic SQL generation with intelligent table selection
-    """
-    
-    generator = DynamicSQLGenerator()
-    
-    try:
-        sql_query, table_info = await generator.generate_sql(question, available_tables)
-        logger.info(f"Enhanced Dynamic SQL: Generated query for {'.'.join(table_info)}")
-        return sql_query, table_info
         
     except Exception as e:
-        logger.error(f"Enhanced SQL generation failed: {e}")
-        
-        # Ultimate fallback
-        fallback_table = None
-        for project, datasets in available_tables.items():
-            for dataset, tables in datasets.items():
-                if tables:
-                    fallback_table = (project, dataset, tables[0])
-                    break
-            if fallback_table:
-                break
-        
-        if fallback_table:
-            project, dataset, table = fallback_table
-            fallback_sql = f"""
-            SELECT *
-            FROM `{project}.{dataset}.{table}`
-            WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-            ORDER BY date DESC
-            LIMIT 20
-            """
-            return fallback_sql.strip(), fallback_table
-        else:
-            raise Exception("No tables available for query generation")
+        logger.error(f"FIXED table discovery failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Discovery failed: {str(e)}")
 
-async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
-    """Format BigQuery results with clean, readable text formatting for chat display"""
+@app.post("/api/intelligent/generate-context")
+async def generate_query_context(request: IntelligentQueryRequest):
+    """
+    FIXED: Generate intelligent context with proper platform detection and SQL generation.
+    """
+    try:
+        logger.info(f"FIXED context generation for query: {request.query}")
+        
+        # Generate enhanced intelligent context
+        context_result = await intelligent_bigquery_mcp.generate_intelligent_sql(
+            request.query, 
+            request.context
+        )
+        
+        return {
+            "success": True,
+            "query": request.query,
+            "context": context_result,
+            "selected_table": context_result.get('table_context', {}).get('available_tables', [{}])[0].get('table_name', 'none'),
+            "generated_sql": context_result.get('table_context', {}).get('generated_sql', 'none'),
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"FIXED context generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Context generation failed: {str(e)}")
+
+@app.post("/api/intelligent/smart-sql-generation")
+async def smart_sql_generation(request: SQLGenerationRequest):
+    """
+    FIXED: Generate SQL with enhanced intelligence and proper table selection.
+    """
+    try:
+        logger.info(f"FIXED Smart SQL generation for: {request.query}")
+        
+        # Step 1: Enhanced context generation
+        context_result = await intelligent_bigquery_mcp.generate_intelligent_sql(request.query)
+        
+        if context_result["status"] == "no_relevant_tables":
+            return {
+                "success": False,
+                "error": "No relevant tables found",
+                "suggestion": context_result.get("suggestion"),
+                "query": request.query,
+                "platform_detected": context_result.get("query_intent", {}).get("primary_platform", "unknown")
+            }
+        
+        # Step 2: Extract generated SQL and context
+        table_context = context_result["table_context"]
+        generated_sql = table_context.get("generated_sql")
+        
+        return {
+            "success": True,
+            "query": request.query,
+            "enhanced_context": context_result,
+            "generated_sql": generated_sql,
+            "selected_table": table_context["available_tables"][0]["table_name"],
+            "platform_detected": context_result.get("discovery_result", {}).get("query_intent", {}).get("primary_platform"),
+            "relevance_score": table_context["available_tables"][0]["relevance_score"],
+            "recommended_approach": context_result.get("recommended_approach"),
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"FIXED Smart SQL generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Smart SQL generation failed: {str(e)}")
+
+@app.post("/api/intelligent/test-platform-detection")
+async def test_platform_detection(request: IntelligentQueryRequest):
+    """
+    NEW: Test platform detection accuracy for debugging.
+    """
+    try:
+        logger.info(f"Testing platform detection for: {request.query}")
+        
+        # Run discovery
+        discovery_result = await intelligent_bigquery_mcp.intelligent_table_discovery(request.query)
+        query_intent = discovery_result.get('query_intent', {})
+        relevant_tables = discovery_result.get('relevant_tables', [])
+        
+        # Analyze results
+        analysis = {
+            "query": request.query,
+            "detected_platform": query_intent.get('primary_platform'),
+            "platforms_found": query_intent.get('platforms_detected', {}),
+            "terms_extracted": query_intent.get('terms', []),
+            "metrics_requested": query_intent.get('metrics_requested', []),
+            "top_3_tables": [
+                {
+                    "table": t['table_name'],
+                    "score": t['relevance_score'],
+                    "tags": t['semantic_tags']
+                } for t in relevant_tables[:3]
+            ],
+            "correct_match": None
+        }
+        
+        # Check if top table matches detected platform
+        if relevant_tables:
+            top_table_tags = relevant_tables[0]['semantic_tags']
+            detected_platform = query_intent.get('primary_platform')
+            analysis["correct_match"] = detected_platform in top_table_tags if detected_platform else False
+        
+        return {
+            "success": True,
+            "analysis": analysis,
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"Platform detection test failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Test failed: {str(e)}")
+
+@app.get("/api/intelligent/metadata/refresh")
+async def refresh_metadata():
+    """Force refresh of metadata cache."""
+    try:
+        logger.info("FIXED: Forcing metadata refresh...")
+        result = await intelligent_bigquery_mcp.discover_and_cache_metadata(force_refresh=True)
+        
+        # Get sample of cached tables for verification
+        sample_tables = {}
+        for table_name, table_info in list(intelligent_bigquery_mcp._table_cache.items())[:5]:
+            sample_tables[table_name] = {
+                "semantic_tags": table_info.get('semantic_tags', []),
+                "has_schema": bool(table_info.get('schema'))
+            }
+        
+        return {
+            "success": True,
+            "refresh_result": result,
+            "sample_tables": sample_tables,
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"FIXED metadata refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Metadata refresh failed: {str(e)}")
+
+@app.get("/api/intelligent/metadata/status")
+async def get_metadata_status():
+    """Get current metadata cache status with diagnostics."""
+    try:
+        # Check cache status without forcing refresh
+        result = await intelligent_bigquery_mcp.discover_and_cache_metadata(force_refresh=False)
+        
+        # Platform distribution analysis
+        platform_distribution = {}
+        for table_name, table_info in intelligent_bigquery_mcp._table_cache.items():
+            for tag in table_info.get('semantic_tags', []):
+                if tag in intelligent_bigquery_mcp._semantic_mapping:
+                    platform_distribution[tag] = platform_distribution.get(tag, 0) + 1
+        
+        return {
+            "success": True,
+            "cache_status": result,
+            "tables_cached": len(intelligent_bigquery_mcp._table_cache),
+            "relationships_found": len(intelligent_bigquery_mcp._relationship_cache),
+            "platform_distribution": platform_distribution,
+            "semantic_mappings_available": len(intelligent_bigquery_mcp._semantic_mapping),
+            "timestamp": datetime.now().isoformat(),
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"FIXED status check failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+# Enhanced unified query function with FIXES v3.3.0 - CORRECTED
+async def unified_query_with_enhanced_intelligence(question: str, force_discovery: bool = False) -> dict:
+    """
+    FIXED v3.3.0: Enhanced unified query processing with proper platform detection and validation
+    """
+    try:
+        logger.info(f"FIXED v3.3.0: Unified intelligent query for: {question}")
+        
+        # Step 1: Force discovery if requested
+        if force_discovery:
+            await intelligent_bigquery_mcp.discover_and_cache_metadata(force_refresh=True)
+        
+        # Step 2: Enhanced intelligent table discovery
+        discovery_result = await intelligent_bigquery_mcp.intelligent_table_discovery(question)
+        
+        if not discovery_result.get('relevant_tables'):
+            query_intent = discovery_result.get('query_intent', {})
+            return {
+                "answer": f"I couldn't find relevant tables for your query about {query_intent.get('primary_platform', 'data')}. The system detected intent for: {', '.join(query_intent.get('terms', []))[:100]}...",
+                "error": "No relevant tables found", 
+                "query_intent": query_intent,
+                "processing_method": "enhanced_discovery_no_tables",
+                "version": "3.3.0"
+            }
+        
+        # Step 3: Generate enhanced SQL context
+        context_result = await intelligent_bigquery_mcp.generate_intelligent_sql(question)
+        
+        if context_result["status"] == "no_relevant_tables":
+            return {
+                "answer": context_result.get("message", "No relevant tables found"),
+                "suggestion": context_result.get("suggestion"),
+                "processing_method": "enhanced_context_no_tables",
+                "version": "3.3.0"
+            }
+        
+        # Step 4: Extract the intelligent SQL that was generated
+        table_context = context_result["table_context"]
+        sql_query = table_context.get("generated_sql")
+        selected_table = table_context["available_tables"][0]
+        
+        # Step 5: CRITICAL VALIDATION - Platform Routing Check
+        table_name = selected_table['table_name'].lower()
+        detected_platform = discovery_result.get('query_intent', {}).get('primary_platform')
+        
+        logger.info(f"VALIDATION CHECK: Detected platform: {detected_platform}, Selected table: {table_name}")
+        
+        # Check for Google Ads -> Microsoft Ads routing error
+        if detected_platform == 'google_ads' and 'msads' in table_name:
+            logger.error(f"PLATFORM ROUTING ERROR: Google Ads query routed to Microsoft Ads table: {table_name}")
+            return {
+                "answer": f"Platform routing error detected. Google Ads query was incorrectly routed to Microsoft Ads table ({table_name}). This indicates a semantic tagging issue in the table discovery system.",
+                "error": "platform_routing_mismatch",
+                "detected_platform": detected_platform,
+                "selected_table": table_name,
+                "processing_method": "enhanced_validation_error_google_to_ms",
+                "debug_info": {
+                    "query_intent": discovery_result.get('query_intent'),
+                    "table_semantic_tags": selected_table.get('semantic_tags', []),
+                    "relevance_score": selected_table.get('relevance_score', 0)
+                },
+                "version": "3.3.0"
+            }
+
+        # Check for Microsoft Ads -> Google Ads routing error  
+        if detected_platform == 'microsoft_ads' and 'gads' in table_name:
+            logger.error(f"PLATFORM ROUTING ERROR: Microsoft Ads query routed to Google Ads table: {table_name}")
+            return {
+                "answer": f"Platform routing error detected. Microsoft Ads query was incorrectly routed to Google Ads table ({table_name}). This indicates a semantic tagging issue in the table discovery system.",
+                "error": "platform_routing_mismatch", 
+                "detected_platform": detected_platform,
+                "selected_table": table_name,
+                "processing_method": "enhanced_validation_error_ms_to_google",
+                "debug_info": {
+                    "query_intent": discovery_result.get('query_intent'),
+                    "table_semantic_tags": selected_table.get('semantic_tags', []),
+                    "relevance_score": selected_table.get('relevance_score', 0)
+                },
+                "version": "3.3.0"
+            }
+        
+        # Check for Facebook Ads routing errors
+        if detected_platform == 'facebook_ads' and ('msads' in table_name or 'gads' in table_name):
+            logger.error(f"PLATFORM ROUTING ERROR: Facebook Ads query routed to {table_name}")
+            return {
+                "answer": f"Platform routing error detected. Facebook Ads query was incorrectly routed to {table_name}. This indicates a semantic tagging issue.",
+                "error": "platform_routing_mismatch",
+                "detected_platform": detected_platform,
+                "selected_table": table_name,
+                "processing_method": "enhanced_validation_error_facebook",
+                "debug_info": {
+                    "query_intent": discovery_result.get('query_intent'),
+                    "table_semantic_tags": selected_table.get('semantic_tags', []),
+                    "relevance_score": selected_table.get('relevance_score', 0)
+                },
+                "version": "3.3.0"
+            }
+        
+        # Step 6: Log successful platform matching
+        logger.info(f"VALIDATION SUCCESS: Platform {detected_platform} correctly routed to table {table_name}")
+        logger.info(f"Selected table {selected_table['table_name']} with score {selected_table['relevance_score']}")
+        logger.info(f"Generated SQL: {sql_query[:200]}...")
+        
+        if not sql_query:
+            # This shouldn't happen with the fixed version, but fallback just in case
+            sql_query = f"SELECT * FROM `{selected_table['table_name']}` LIMIT 10"
+        
+        # Step 7: Execute SQL
+        result = await intelligent_bigquery_mcp.execute_sql(sql_query)
+        
+        if result.get("isError") or not result.get("content"):
+            return {
+                "answer": f"Query execution failed: {result.get('error', 'Unknown error')}",
+                "sql_query": sql_query,
+                "selected_table": selected_table['table_name'],
+                "processing_method": "enhanced_sql_execution_failed",
+                "version": "3.3.0"
+            }
+        
+        # Step 8: Format results with enhanced context
+        formatted_answer = await format_bigquery_results_enhanced(
+            result, question, sql_query, selected_table, discovery_result.get('query_intent', {})
+        )
+        
+        return {
+            "answer": formatted_answer,
+            "data": result,
+            "sql_query": sql_query,
+            "discovery_result": discovery_result,
+            "context_result": context_result,
+            "table_used": selected_table["table_name"],
+            "platform_detected": discovery_result.get('query_intent', {}).get('primary_platform'),
+            "relevance_score": selected_table['relevance_score'],
+            "processing_method": "enhanced_intelligent_end_to_end_success",
+            "validation_status": "platform_routing_validated",
+            "version": "3.3.0"
+        }
+        
+    except Exception as e:
+        logger.error(f"FIXED unified intelligent query failed: {e}")
+        return {
+            "answer": f"Enhanced Intelligent Query Generation v3.3.0 error: {str(e)}",
+            "error": str(e),
+            "processing_method": "enhanced_unified_error",
+            "version": "3.3.0"
+        }
+
+
+# Enhanced format function with correct platform detection
+async def format_bigquery_results_enhanced(result: dict, question: str, sql_query: str, 
+                                         selected_table: dict, query_intent: dict) -> str:
+    """Enhanced result formatting with ACTUAL platform detection from table name"""
     
     if not openai_client:
         return f"Here are the BigQuery results for: {question}"
@@ -818,17 +532,35 @@ async def format_bigquery_results_like_claude(result: dict, question: str, sql_q
         # Combine all raw data for analysis
         data_text = '\n'.join(raw_data)
         
-        # Enhanced prompt for clean, readable chat formatting
+        # FIXED: Determine actual platform from table name, not just detected intent
+        table_name = selected_table.get('table_name', 'unknown')
+        relevance_score = selected_table.get('relevance_score', 0)
+        
+        # Determine ACTUAL platform from table name
+        actual_platform = "unknown"
+        if 'msads' in table_name.lower():
+            actual_platform = "microsoft_ads"
+        elif 'gads' in table_name.lower():
+            actual_platform = "google_ads"  
+        elif 'facebook' in table_name.lower():
+            actual_platform = "facebook_ads"
+        
+        detected_platform = query_intent.get('primary_platform', 'unknown')
+        
         analysis_prompt = f"""You are an expert marketing data analyst. Analyze this BigQuery data and provide insights in a clean, readable format for a chat interface.
 
 ORIGINAL QUESTION: {question}
+PLATFORM DETECTED IN QUERY: {detected_platform}
+ACTUAL PLATFORM FROM TABLE: {actual_platform}
+TABLE USED: {table_name} (relevance score: {relevance_score})
+SQL QUERY USED: {sql_query}
 
 RAW DATA FROM BIGQUERY:
 {data_text}
 
 FORMATTING REQUIREMENTS - VERY IMPORTANT:
 1. Use ONLY plain text formatting that works in chat
-2. Use line breaks (\\n) for spacing between sections
+2. Use line breaks for spacing between sections
 3. Use simple text headers like "EXECUTIVE SUMMARY:" 
 4. Use bullet points with "•" character
 5. Use numbered lists with "1.", "2.", "3."
@@ -837,12 +569,12 @@ FORMATTING REQUIREMENTS - VERY IMPORTANT:
 8. Use capital letters for emphasis instead of bold
 
 RESPONSE STRUCTURE:
-Start with executive summary, then break down key findings, then insights, then recommendations.
+Start with executive summary mentioning the ACTUAL platform ({actual_platform}) and key findings, then break down metrics, then insights, then recommendations.
 
-Make this professional and easy to read in a chat interface."""
+Make this professional and easy to read in a chat interface. Base your analysis on the ACTUAL platform data source."""
 
         response = openai_client.chat.completions.create(
-            model="gpt-4o",  # Upgraded model
+            model="gpt-4o",
             messages=[{"role": "user", "content": analysis_prompt}],
             max_tokens=1000,
             temperature=0.3
@@ -855,155 +587,16 @@ Make this professional and easy to read in a chat interface."""
         formatted_response = formatted_response.replace('**', '')
         formatted_response = formatted_response.replace('##', '')
         
-        # Add data source note
-        formatted_response += f"\n\n---\nAnalysis based on {len(result['content'])} records from BigQuery (4-week rolling window)"
+        # Add enhanced data source note with ACTUAL platform
+        formatted_response += f"\n\n---\nAnalysis based on {len(result['content'])} records from {table_name}"
+        formatted_response += f"\nActual Platform: {actual_platform.upper()} | Query Intent: {detected_platform.upper()} | Relevance Score: {relevance_score} | Enhanced Intelligence v3.3.0"
         
         return formatted_response
         
     except Exception as e:
-        logger.error(f"Response formatting error: {e}")
-        return f"Retrieved {len(result.get('content', []))} records from BigQuery for: {question}"
-
-# Keep all your existing functions for table listing, query classification, etc.
-async def handle_bigquery_tables_query_dynamic(question: str) -> dict:
-    """
-    Handle table/dataset listing with consistent indentation and no descriptions
-    Version: 2.8.0 - Enhanced dynamic version
-    """
-    try:
-        # Enhanced keywords for table listing queries
-        table_keywords = [
-            'tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables',
-            'what are the tables', 'show me tables', 'what tables', 'available tables',
-            'table names', 'list all tables', 'expand', 'expand the names', 'expand names of table'
-        ]
-        
-        # Check if this is definitely a table listing query
-        is_table_query = any(keyword in question.lower() for keyword in table_keywords)
-        
-        if not is_table_query:
-            return None  # Let regular SQL handling take over
-        
-        # Discover all projects, datasets, and tables dynamically
-        projects = await discover_all_projects()
-        all_datasets = await discover_all_datasets()
-        all_tables = await discover_all_tables()
-        
-        logger.info(f"LISTING DEBUG: Projects={projects}")
-        logger.info(f"LISTING DEBUG: Datasets={all_datasets}")  
-        logger.info(f"LISTING DEBUG: Tables keys={list(all_tables.keys())}")
-        
-        # Count totals correctly by checking actual data
-        total_datasets = 0
-        total_tables = 0
-        
-        # Count datasets that actually have tables
-        datasets_with_tables = {}
-        
-        for project, project_datasets in all_tables.items():
-            logger.info(f"LISTING DEBUG: Project {project} has datasets: {list(project_datasets.keys())}")
-            
-            for dataset, tables in project_datasets.items():
-                if tables:  # Only count datasets that have tables
-                    if project not in datasets_with_tables:
-                        datasets_with_tables[project] = []
-                    datasets_with_tables[project].append(dataset)
-                    total_datasets += 1
-                    total_tables += len(tables)
-                    logger.info(f"LISTING DEBUG: Dataset {dataset} has {len(tables)} tables")
-        
-        logger.info(f"LISTING DEBUG: Final counts - datasets: {total_datasets}, tables: {total_tables}")
-        
-        # Create comprehensive response with FIXED formatting
-        if total_tables == 0:
-            answer = "No tables were discovered. This might be due to:\n\n"
-            answer += "• BigQuery connection issues\n"
-            answer += "• Permission problems\n" 
-            answer += "• No tables in the accessible datasets\n\n"
-            answer += "Please check the server logs for more details."
-        else:
-            answer = f"I discovered {len(projects)} projects with {total_datasets} datasets and {total_tables} tables. Here's what's available:\n\n"
-            
-            table_counter = 1
-            
-            # List by project, then dataset
-            for project, project_datasets in all_tables.items():
-                project_has_tables = any(len(tables) > 0 for tables in project_datasets.values())
-                
-                if project_has_tables:
-                    answer += f"PROJECT: {project}\n\n"
-                    
-                    for dataset, tables in project_datasets.items():
-                        if tables:  # Only show datasets with tables
-                            answer += f"Dataset: {dataset} ({len(tables)} tables)\n\n"
-                            
-                            for table in sorted(tables):  # Sort for consistency
-                                answer += f"{table_counter}. {table}\n"
-                                table_counter += 1
-                            
-                            answer += "\n"
-            
-            # Add sample questions based on discovered table names
-            answer += "SAMPLE QUESTIONS YOU CAN ASK:\n"
-            
-            # Generate sample questions based on actual discovered tables
-            sample_questions = []
-            for project_datasets in all_tables.values():
-                for tables in project_datasets.values():
-                    for table in tables:
-                        table_lower = table.lower()
-                        if 'consolidated' in table_lower and "• Show me consolidated dashboard data" not in sample_questions:
-                            sample_questions.append("• Show me consolidated dashboard data")
-                        elif 'campaign' in table_lower and len(sample_questions) < 5:
-                            sample_questions.append("• What are our top performing campaigns by ROAS?")
-                        elif 'ads' in table_lower and "• Show me advertising performance metrics" not in sample_questions:
-                            sample_questions.append("• Show me advertising performance metrics")
-                        elif 'order' in table_lower and "• Give a summary about the ordered items in last week" not in sample_questions:
-                            sample_questions.append("• Give a summary about the ordered items in last week")
-                        elif 'ga4' in table_lower and "• Show me GA4 analytics data" not in sample_questions:
-                            sample_questions.append("• Show me GA4 analytics data")
-            
-            # Add unique sample questions
-            for question_text in list(set(sample_questions))[:5]:
-                answer += f"{question_text}\n"
-            
-            # If no specific samples were generated, add generic ones
-            if not sample_questions:
-                answer += "• Show me data from the available tables\n"
-                answer += "• Analyze performance metrics\n"
-                answer += "• Give me a summary of recent data\n"
-        
-        return {
-            "answer": answer,
-            "data": {
-                "projects": projects,
-                "datasets_with_tables": datasets_with_tables,
-                "total_datasets": total_datasets,
-                "total_tables": total_tables,
-                "discovery_time": datetime.now().isoformat(),
-                "cache_ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60,
-                "all_table_names": [
-                    f"{proj}.{ds}.{table}" 
-                    for proj, datasets in all_tables.items() 
-                    for ds, tables in datasets.items() 
-                    for table in tables
-                ]
-            },
-            "processing_time": 2.0,
-            "processing_method": "enhanced_dynamic_v2.8.0",
-            "version": VERSION
-        }
-        
-    except Exception as e:
-        logger.error(f"Table listing error: {e}")
-        logger.error(f"Exception details:", exc_info=True)
-        return {
-            "answer": f"I encountered an error while listing BigQuery resources:\n\n{str(e)}\n\nBased on the logs, table discovery appears to be working in the backend. This might be a display formatting issue.",
-            "error": str(e),
-            "processing_time": 0.5,
-            "version": f"{VERSION}_error"
-        }
-
+        logger.error(f"Enhanced response formatting error: {e}")
+        return f"Retrieved {len(result.get('content', []))} records from {selected_table.get('table_name', 'BigQuery')} for: {question}"
+# Legacy functions (keeping existing functionality)
 def classify_query(question: str) -> Dict[str, str]:
     """Enhanced query classification"""
     question_lower = question.lower()
@@ -1017,7 +610,7 @@ def classify_query(question: str) -> Dict[str, str]:
     marketing_keywords = [
         "roas", "ctr", "cpc", "performance", "campaign", "ads", "spend", 
         "conversions", "revenue", "budget", "linkedin", "facebook", "google",
-        "meta", "tiktok", "impressions", "clicks"
+        "meta", "tiktok", "impressions", "clicks", "microsoft", "bing"
     ]
     
     document_keywords = [
@@ -1067,7 +660,7 @@ async def simple_supabase_search(question: str) -> Dict:
             context = "\n".join([doc['content'] for doc in documents[:3]])
             
             response = openai_client.chat.completions.create(
-                model="gpt-4o",  # Upgraded model
+                model="gpt-4o",
                 messages=[{
                     "role": "user", 
                     "content": f"""Based on this context from marketing documents:
@@ -1156,7 +749,7 @@ Detailed response:"""
             return answer
 
         response = openai_client.chat.completions.create(
-            model="gpt-4o",  # Upgraded model
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.3
@@ -1168,7 +761,7 @@ Detailed response:"""
         logger.error(f"Response formatting error: {e}")
         return answer
 
-# Keep all your existing dashboard endpoints exactly as they are
+# Dashboard endpoints (keeping existing functionality)
 @app.get("/api/dashboard/consolidated/summary")
 async def get_consolidated_summary():
     """Get high-level summary metrics from consolidated master table (Last 4 weeks)"""
@@ -1189,21 +782,18 @@ async def get_consolidated_summary():
         WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         """
         
-        # Execute raw SQL directly via MCP (bypass SOLID AI template matching)
-        result = await bigquery_mcp.execute_sql(query)
+        result = await intelligent_bigquery_mcp.execute_sql(query)
         
         if result.get("isError") or not result.get("content"):
             logger.error(f"Query execution failed: {result}")
             raise Exception("Query execution failed")
         
-        # Parse the result - Handle single aggregated row
+        # Parse the result
         if result["content"] and len(result["content"]) > 0:
             try:
-                # Get the first (and only) result row
                 data_item = result["content"][0]
                 
                 if isinstance(data_item, dict) and "text" in data_item:
-                    # Parse the JSON string from the text field
                     row_data = json.loads(data_item["text"])
                     logger.info(f"Parsed aggregation data: {row_data}")
                     
@@ -1224,14 +814,8 @@ async def get_consolidated_summary():
                     
             except json.JSONDecodeError as parse_error:
                 logger.error(f"JSON parse error: {parse_error}")
-                logger.error(f"Raw response content: {result['content']}")
             except Exception as parse_error:
                 logger.error(f"Data processing error: {parse_error}")
-                logger.error(f"Raw response: {result}")
-        
-        # Enhanced fallback with debugging info
-        logger.warning("Using fallback data - no valid aggregated results found")
-        logger.info(f"Raw result structure: {result}")
         
         return {
             "total_stores": 0,
@@ -1244,354 +828,69 @@ async def get_consolidated_summary():
             "avg_bounce_rate": 0.0,
             "total_new_users": 0,
             "total_add_to_carts": 0,
-            "note": "Using fallback data - aggregation query may have failed",
-            "debug_info": {
-                "result_has_content": bool(result.get("content")),
-                "content_length": len(result.get("content", [])),
-                "query_executed": query[:100] + "..."
-            }
+            "note": "Using fallback data"
         }
             
     except Exception as e:
         logger.error(f"Dashboard summary error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Dashboard error: {str(e)}")
 
-@app.get("/api/dashboard/consolidated/by-store")
-async def get_consolidated_by_store():
-    """Get performance metrics grouped by online store (Last 4 weeks)"""
-    try:
-        query = """
-        SELECT 
-            online_store,
-            SUM(Users) as total_users,
-            SUM(Sessions) as total_sessions,
-            SUM(Transactions) as total_transactions,
-            SUM(Revenue) as total_revenue,
-            AVG(Conversion_rate) as avg_conversion_rate,
-            AVG(Bounce_rate) as avg_bounce_rate,
-            SUM(New_users) as total_new_users,
-            SUM(Pageviews) as total_pageviews
-        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-        GROUP BY online_store
-        ORDER BY total_revenue DESC
-        """
-        
-        result = await bigquery_mcp.execute_sql(query)
-        
-        if result.get("isError") or not result.get("content"):
-            return {"stores": [], "error": "Query execution failed"}
-        
-        # Use enhanced parsing
-        store_data = fix_dashboard_parsing(result)
-        
-        logger.info(f"Store data parsed successfully: {len(store_data)} stores")
-        return {"stores": store_data}
-        
-    except Exception as e:
-        logger.error(f"Dashboard by store error: {str(e)}")
-        return {"stores": [], "error": str(e)}
-
-@app.get("/api/dashboard/consolidated/by-channel")
-async def get_consolidated_by_channel():
-    """Get performance metrics grouped by channel (Last 4 weeks)"""
-    try:
-        query = """
-        SELECT 
-            Channel_group,
-            SUM(Users) as total_users,
-            SUM(Sessions) as total_sessions,
-            SUM(Transactions) as total_transactions,
-            SUM(Revenue) as total_revenue,
-            AVG(Conversion_rate) as avg_conversion_rate,
-            AVG(Bounce_rate) as avg_bounce_rate,
-            SUM(Add_To_Carts) as total_add_to_carts
-        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-        GROUP BY Channel_group
-        ORDER BY total_revenue DESC
-        """
-        
-        result = await bigquery_mcp.execute_sql(query)
-        
-        if result.get("isError") or not result.get("content"):
-            return {"channels": [], "error": "Query execution failed"}
-        
-        channel_data = []
-        
-        # Parse MCP response - Handle multiple JSON objects
-        if result["content"]:
-            try:
-                for item in result["content"]:
-                    if isinstance(item, dict) and "text" in item:
-                        row_data = json.loads(item["text"])
-                        channel_data.append({
-                            "channel": row_data.get("Channel_group", "Unknown"),
-                            "users": int(row_data.get("total_users", 0)),
-                            "sessions": int(row_data.get("total_sessions", 0)),
-                            "transactions": int(row_data.get("total_transactions", 0)),
-                            "revenue": float(row_data.get("total_revenue", 0) or 0),
-                            "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
-                            "bounce_rate": float(row_data.get("avg_bounce_rate", 0) or 0),
-                            "add_to_carts": int(row_data.get("total_add_to_carts", 0))
-                        })
-            except Exception as parse_error:
-                logger.error(f"Channel data parse error: {parse_error}")
-                return {"channels": [], "error": f"Parse error: {str(parse_error)}"}
-        
-        logger.info(f"Channel data parsed successfully: {len(channel_data)} channels")
-        return {"channels": channel_data}
-        
-    except Exception as e:
-        logger.error(f"Dashboard by channel error: {str(e)}")
-        return {"channels": [], "error": str(e)}
-
-@app.get("/api/dashboard/consolidated/time-series")
-async def get_consolidated_time_series():
-    """Get daily performance metrics for time series charts (Last 4 weeks)"""
-    try:
-        query = """
-        SELECT 
-            Date,
-            SUM(Users) as daily_users,
-            SUM(Sessions) as daily_sessions,
-            SUM(Transactions) as daily_transactions,
-            SUM(Revenue) as daily_revenue,
-            AVG(Conversion_rate) as avg_conversion_rate,
-            SUM(New_users) as daily_new_users
-        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-        GROUP BY Date
-        ORDER BY Date ASC
-        """
-        
-        result = await bigquery_mcp.execute_sql(query)
-        
-        if result.get("isError") or not result.get("content"):
-            return {"time_series": [], "error": "Query execution failed"}
-        
-        time_series_data = []
-        
-        # Parse MCP response - Handle multiple JSON objects
-        if result["content"]:
-            try:
-                for item in result["content"]:
-                    if isinstance(item, dict) and "text" in item:
-                        row_data = json.loads(item["text"])
-                        
-                        # Handle date formatting
-                        date_value = row_data.get("Date")
-                        if isinstance(date_value, str):
-                            formatted_date = date_value
-                        else:
-                            formatted_date = str(date_value)
-                        
-                        time_series_data.append({
-                            "date": formatted_date,
-                            "users": int(row_data.get("daily_users", 0)),
-                            "sessions": int(row_data.get("daily_sessions", 0)),
-                            "transactions": int(row_data.get("daily_transactions", 0)),
-                            "revenue": float(row_data.get("daily_revenue", 0) or 0),
-                            "conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0),
-                            "new_users": int(row_data.get("daily_new_users", 0))
-                        })
-            except Exception as parse_error:
-                logger.error(f"Time series data parse error: {parse_error}")
-                return {"time_series": [], "error": f"Parse error: {str(parse_error)}"}
-        
-        logger.info(f"Time series data parsed successfully: {len(time_series_data)} days")
-        return {"time_series": time_series_data}
-        
-    except Exception as e:
-        logger.error(f"Dashboard time series error: {str(e)}")
-        return {"time_series": [], "error": str(e)}
-
-@app.get("/api/dashboard/consolidated/channel-summary")
-async def get_channel_summary():
-    """Get summary data for channel distribution - 4 week rolling window"""
-    try:
-        query = """
-        SELECT 
-            Channel_group,
-            SUM(Users) as users,
-            SUM(Sessions) as sessions,
-            ROUND(AVG(Avg_session_duration), 2) as avg_session_duration,
-            ROUND(AVG(Bounce_rate), 2) as bounce_rate,
-            ROUND((SUM(Sessions) / NULLIF(SUM(Users), 0)), 2) as sessions_per_user,
-            ROUND(AVG(Conversion_rate), 2) as avg_conversion_rate
-        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-          AND Channel_group IS NOT NULL
-        GROUP BY Channel_group
-        ORDER BY sessions DESC
-        """
-        
-        result = await bigquery_mcp.execute_sql(query)
-        
-        if result.get("isError") or not result.get("content"):
-            return {"channel_summary": [], "error": "Query execution failed"}
-        
-        channel_summary = []
-        
-        if result["content"]:
-            try:
-                for item in result["content"]:
-                    if isinstance(item, dict) and "text" in item:
-                        row_data = json.loads(item["text"])
-                        channel_summary.append({
-                            "channel": row_data.get("Channel_group", "Unknown"),
-                            "users": int(row_data.get("users", 0)),
-                            "sessions": int(row_data.get("sessions", 0)),
-                            "avg_session_duration": float(row_data.get("avg_session_duration", 0) or 0),
-                            "bounce_rate": float(row_data.get("bounce_rate", 0) or 0),
-                            "sessions_per_user_percent": float(row_data.get("sessions_per_user", 0) or 0) * 100,
-                            "avg_conversion_rate": float(row_data.get("avg_conversion_rate", 0) or 0)
-                        })
-            except Exception as parse_error:
-                logger.error(f"Channel summary parse error: {parse_error}")
-                return {"channel_summary": [], "error": f"Parse error: {str(parse_error)}"}
-        
-        logger.info(f"Channel summary parsed successfully: {len(channel_summary)} channels")
-        return {"channel_summary": channel_summary}
-        
-    except Exception as e:
-        logger.error(f"Channel summary error: {str(e)}")
-        return {"channel_summary": [], "error": str(e)}
-@app.get("/api/dashboard/consolidated/new-users-by-channel")
-async def get_new_users_by_channel():
-    """Get new users by channel for the same 4-week time period"""
-    try:
-        query = """
-        SELECT 
-            Channel_group,
-            SUM(New_users) as total_new_users
-        FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
-          AND Channel_group IS NOT NULL
-        GROUP BY Channel_group
-        ORDER BY total_new_users DESC
-        """
-        
-        result = await bigquery_mcp.execute_sql(query)
-        
-        if result.get("isError") or not result.get("content"):
-            return {"new_users_by_channel": [], "error": "Query execution failed"}
-        
-        new_users_data = []
-        if result["content"]:
-            try:
-                for item in result["content"]:
-                    if isinstance(item, dict) and "text" in item:
-                        row_data = json.loads(item["text"])
-                        new_users_data.append({
-                            "channel": row_data.get("Channel_group", "Unknown"),
-                            "new_users": int(row_data.get("total_new_users", 0))
-                        })
-            except Exception as parse_error:
-                logger.error(f"New users data parse error: {parse_error}")
-                return {"new_users_by_channel": [], "error": f"Parse error: {str(parse_error)}"}
-        
-        logger.info(f"New users by channel parsed successfully: {len(new_users_data)} channels")
-        return {"new_users_by_channel": new_users_data}
-        
-    except Exception as e:
-        logger.error(f"New users by channel error: {str(e)}")
-        return {"new_users_by_channel": [], "error": str(e)}
-    
-# Keep all your existing API endpoints with modifications for enhanced system
+# Main API endpoints
 @app.get("/")
 async def root():
-    """Root endpoint with Enhanced Dynamic System information"""
+    """Root endpoint with Enhanced Intelligence v3.2 information"""
     uptime = time.time() - start_time
     
-    # Quick discovery summary
-    try:
-        projects = await discover_all_projects()
-        datasets = await discover_all_datasets()
-        tables = await discover_all_tables()
-        
-        discovery_summary = {
-            "projects": len(projects),
-            "datasets": sum(len(ds) for ds in datasets.values()),
-            "tables": sum(len(tbls) for ds in tables.values() for tbls in ds.values()),
-            "last_discovery": max(discovery_cache.last_discovery.values()).isoformat() if discovery_cache.last_discovery else None
-        }
-    except:
-        discovery_summary = {"status": "discovery_unavailable"}
-    
     return {
-        "service": "Marketing Intelligence API - Enhanced Dynamic System",
+        "service": "Marketing Intelligence API - FIXED Enhanced Dynamic System v3.2",
         "version": VERSION,
         "previous_stable": PREVIOUS_STABLE_VERSION,
-        "status": "enhanced_dynamic_active",
+        "status": "enhanced_intelligent_query_v3_2_active",
         "uptime_seconds": round(uptime, 2),
         "environment": os.getenv("ENVIRONMENT", "unknown"),
-        "discovery_summary": discovery_summary,
-        "enhanced_features": {
-            "mcp_powered_schema_discovery": True,
-            "intelligent_table_selection": True,
-            "gpt_4o_integration": True,
-            "zero_hardcoded_assumptions": True,
-            "dynamic_sql_generation": True,
-            "information_schema_fallback": True,
-            "four_week_rolling_window": True,
-            "consolidated_dashboard": True
-        },
-        "features": {
-            "advanced_rag": CORE_MODULES_AVAILABLE,
-            "simple_search": EXTERNAL_CLIENTS_AVAILABLE,
-            "enhanced_dynamic_sql": openai_client is not None,
-            "ai_model": "gpt-4o",
-            "dynamic_discovery": True,
-            "real_time_tables": True,
-            "intelligent_table_selection": True,
-            "cache_management": True,
-            "multi_project_support": True,
-            "auto_scaling": True,
-            "quote_handling_fixed": True,
-            "clean_formatting": True,
-            "dashboard_endpoints": True,
-            "mcp_schema_inspection": True
+        "fixed_features_v3_2": {
+            "platform_detection_fixed": True,
+            "relevance_scoring_enhanced": True,
+            "sql_generation_improved": True,
+            "schema_analysis_fixed": True,
+            "account_matching_enhanced": True,
+            "join_detection_improved": True,
+            "microsoft_ads_detection": True,
+            "google_ads_detection": True,
+            "facebook_ads_detection": True,
+            "query_intent_analysis": True,
+            "enhanced_column_mapping": True
         },
         "endpoints": {
-            "chat": "/api/chat",
-            "unified_query": "/api/unified-query", 
-            "bigquery_test": "/api/bigquery/test",
-            "dynamic_discovery": "/api/bigquery/discover",
-            "clear_cache": "/api/bigquery/clear-cache",
-            "health": "/api/health"
-        },
-        "dashboard_endpoints": {
-            "summary": "/api/dashboard/consolidated/summary",
-            "by_store": "/api/dashboard/consolidated/by-store", 
-            "by_channel": "/api/dashboard/consolidated/by-channel",
-            "time_series": "/api/dashboard/consolidated/time-series",
-            "channel_summary": "/api/dashboard/consolidated/channel-summary"
+            "main": {
+                "chat": "/api/chat",
+                "unified_query": "/api/unified-query",
+                "health": "/api/health"
+            },
+            "intelligent_query": {
+                "discover_tables": "/api/intelligent/discover-tables",
+                "generate_context": "/api/intelligent/generate-context", 
+                "smart_sql_generation": "/api/intelligent/smart-sql-generation",
+                "test_platform_detection": "/api/intelligent/test-platform-detection",
+                "metadata_refresh": "/api/intelligent/metadata/refresh",
+                "metadata_status": "/api/intelligent/metadata/status"
+            },
+            "dashboard": {
+                "summary": "/api/dashboard/consolidated/summary"
+            }
         },
         "changelog": {
-            "v2.8.0": [
-                "Enhanced Dynamic System: MCP-powered schema discovery",
-                "Intelligent table selector with relevance scoring",
-                "GPT-4o integration for better SQL generation", 
-                "Zero hardcoded schema assumptions",
-                "INFORMATION_SCHEMA fallback for complete dynamics",
-                "Enhanced dashboard parsing with store name fixes",
-                "Truly dynamic SQL generation based on actual schemas"
-            ],
-            "v2.7.4": [
-                "Added consolidated dashboard endpoints",
-                "Implemented 4-week rolling window for all queries",
-                "Enhanced consolidated_master table support",
-                "Added dashboard-specific SQL templates",
-                "Improved JSON parsing for MCP responses"
-            ],
-            "v2.7.3": [
-                "SOLID AI: Multi-layered SQL generation system",
-                "Proven templates for common queries (ROAS, campaigns, orders)",
-                "Enhanced AI safety with comprehensive validation",
-                "Deterministic table selection without randomness", 
-                "Triple-fallback system for guaranteed results",
-                "Fixed table discovery counting and display bugs"
+            "v3.2.0_FIXES": [
+                "FIXED: Platform detection now properly matches Microsoft Ads vs Google Ads vs Facebook Ads",
+                "FIXED: Relevance scoring heavily weights exact platform matches",
+                "FIXED: Schema analysis properly categorizes columns by function",
+                "FIXED: SQL generation uses discovered columns intelligently",
+                "FIXED: Account name extraction with better pattern matching",
+                "FIXED: Query intent analysis with platform confidence scoring",
+                "ENHANCED: Column mapping with platform-specific metric patterns",
+                "ENHANCED: Table selection logic with proper semantic scoring",
+                "ENHANCED: Join detection and relationship analysis",
+                "ENHANCED: Error handling and debugging capabilities"
             ]
         }
     }
@@ -1643,12 +942,12 @@ async def chat(request: QueryRequest):
 
 @app.post("/api/unified-query")
 async def unified_query(request: UnifiedQueryRequest):
-    """Enhanced unified endpoint with Enhanced Dynamic System"""
+    """Enhanced unified endpoint with FIXED Intelligent Query Generation v3.2"""
     process_start = time.time()
     
     try:
         if request.data_source == "rag":
-            # RAG processing
+            # RAG processing (existing functionality)
             if not CORE_MODULES_AVAILABLE and not EXTERNAL_CLIENTS_AVAILABLE:
                 raise HTTPException(status_code=503, detail="RAG system not available")
             
@@ -1673,89 +972,29 @@ async def unified_query(request: UnifiedQueryRequest):
                 "sources_used": result.get("sources", 0),
                 "processing_time": processing_time,
                 "response_style": request.preferred_style,
-                "data_source": "rag"
+                "data_source": "rag",
+                "version": VERSION
             }
             
         elif request.data_source == "bigquery":
-            # Enhanced Dynamic System: Table listing
-            table_result = await handle_bigquery_tables_query_dynamic(request.question)
+            # FIXED: Enhanced Intelligent Query Generation approach
+            logger.info(f"Using FIXED Enhanced Intelligent Query Generation v{VERSION} for: {request.question}")
             
-            if table_result is not None:
-                # This is a table listing query - measure time here
-                processing_time = time.time() - process_start
-                table_result["processing_time"] = processing_time
-                table_result["response_style"] = request.preferred_style
-                table_result["data_source"] = "bigquery"
-                table_result["sql_query"] = None
-                return table_result
+            result = await unified_query_with_enhanced_intelligence(request.question, force_discovery=False)
             
-            else:
-                # Enhanced Dynamic System: Fully dynamic SQL generation
-                logger.info(f"Enhanced Dynamic System: Starting table discovery...")
-                discovery_start = time.time()
-                available_tables = await discover_all_tables()
-                logger.info(f"Table discovery took: {time.time() - discovery_start:.2f}s")
-                
-                logger.info(f"Enhanced Dynamic System: Starting SQL generation...")
-                sql_gen_start = time.time()
-                sql_query, table_info = await generate_sql_with_ai_dynamic_enhanced(request.question, available_tables)
-                logger.info(f"SQL generation took: {time.time() - sql_gen_start:.2f}s")
-                
-                logger.info(f"Enhanced Dynamic System: Executing SQL: {sql_query[:100]}...")
-                sql_exec_start = time.time()
-                result = await bigquery_mcp.execute_sql(sql_query)
-                logger.info(f"SQL execution took: {time.time() - sql_exec_start:.2f}s")
-                
-                # Check if query was successful
-                if result.get("isError") or not result.get("content"):
-                    processing_time = time.time() - process_start
-                    error_message = "Query execution failed"
-                    if result.get("content"):
-                        error_message = str(result["content"][:200])
-                    
-                    return {
-                        "answer": f"Query failed on table {'.'.join(table_info)}: {error_message}",
-                        "error": error_message,
-                        "sql_query": sql_query,
-                        "table_used": table_info,
-                        "query_type": "sql_error",
-                        "processing_method": "enhanced_dynamic_v2.8.0",
-                        "sources_used": 0,
-                        "processing_time": processing_time,
-                        "response_style": request.preferred_style,
-                        "data_source": "bigquery"
-                    }
-                
-                # Enhanced Dynamic System: Better formatting
-                logger.info(f"Enhanced Dynamic System: Starting response formatting...")
-                format_start = time.time()
-                formatted_answer = await format_bigquery_results_like_claude(result, request.question, sql_query)
-                logger.info(f"Response formatting took: {time.time() - format_start:.2f}s")
-                
-                # Calculate final processing time
-                processing_time = time.time() - process_start
-                logger.info(f"Total processing time: {processing_time:.2f}s")
-                
-                return {
-                    "answer": formatted_answer,
-                    "data": result,
-                    "sql_query": sql_query,
-                    "table_used": table_info,
-                    "query_type": "data_query",
-                    "processing_method": "enhanced_dynamic_v2.8.0",
-                    "sources_used": len(result.get("content", [])),
-                    "processing_time": processing_time,
-                    "response_style": request.preferred_style,
-                    "data_source": "bigquery"
-                }
+            processing_time = time.time() - process_start
+            result["processing_time"] = processing_time
+            result["response_style"] = request.preferred_style
+            result["data_source"] = "bigquery"
+            
+            return result
             
     except Exception as e:
         processing_time = time.time() - process_start
-        logger.error(f"Unified query Enhanced Dynamic error: {e}")
-        logger.error(f"Error occurred after {processing_time:.2f}s")
+        logger.error(f"FIXED Unified query v{VERSION} error: {e}")
         return {
-            "answer": f"Enhanced Dynamic System error: {str(e)}",
-            "query_type": "enhanced_dynamic_error",
+            "answer": f"Enhanced Intelligent Query Generation v{VERSION} error: {str(e)}",
+            "query_type": "enhanced_intelligent_v3_2_error",
             "processing_method": "error_handling",
             "sources_used": 0,
             "processing_time": processing_time,
@@ -1765,130 +1004,55 @@ async def unified_query(request: UnifiedQueryRequest):
             "version": VERSION
         }
 
-# Dynamic discovery endpoints
-@app.get("/api/bigquery/discover")
-async def discover_all_resources():
-    """Discover all BigQuery resources dynamically"""
-    try:
-        projects = await discover_all_projects()
-        datasets = await discover_all_datasets()
-        tables = await discover_all_tables()
-        
-        return {
-            "status": "success",
-            "discovery_time": datetime.now().isoformat(),
-            "projects": projects,
-            "datasets": datasets,
-            "tables": tables,
-            "summary": {
-                "total_projects": len(projects),
-                "total_datasets": sum(len(ds) for ds in datasets.values()),
-                "total_tables": sum(len(tbls) for ds in tables.values() for tbls in ds.values())
-            },
-            "cache_info": {
-                "ttl_minutes": discovery_cache.cache_ttl.total_seconds() / 60,
-                "last_discovery": {k: v.isoformat() for k, v in discovery_cache.last_discovery.items()}
-            },
-            "enhanced_dynamic_version": VERSION
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e), "version": VERSION}
-
-@app.post("/api/bigquery/clear-cache")
-async def clear_discovery_cache():
-    """Clear the discovery cache to force fresh discovery"""
-    global discovery_cache
-    discovery_cache = BigQueryDiscoveryCache(cache_ttl_minutes=5)
-    
-    return {
-        "status": "success",
-        "message": "Discovery cache cleared. Next queries will perform fresh discovery.",
-        "timestamp": datetime.now().isoformat(),
-        "version": VERSION
-    }
-
-@app.get("/api/bigquery/test")
-async def test_bigquery_connection():
-    """Test BigQuery MCP connection"""
-    try:
-        datasets = await discover_all_datasets()
-        return {
-            "server_url": bigquery_mcp.server_url,
-            "connection_status": "healthy",
-            "datasets_found": sum(len(ds) for ds in datasets.values()),
-            "environment": os.getenv("ENVIRONMENT", "production"),
-            "version": VERSION,
-            "enhanced_features": "active"
-        }
-    except Exception as e:
-        return {
-            "server_url": bigquery_mcp.server_url,
-            "connection_status": "error",
-            "error": str(e),
-            "version": VERSION
-        }
-
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
-    """Comprehensive health check including Enhanced Dynamic System"""
+    """Comprehensive health check including FIXED Enhanced Intelligence v3.2"""
     systems = {}
     
-    systems["enhanced_dynamic_version"] = VERSION
+    systems["enhanced_intelligent_query_version"] = VERSION
+    systems["platform_detection"] = "FIXED - Microsoft/Google/Facebook Ads"
+    systems["relevance_scoring"] = "FIXED - Enhanced with platform weighting"
+    systems["schema_analysis"] = "FIXED - Proper column categorization"
+    systems["sql_generation"] = "FIXED - Intelligent with discovered columns"
+    systems["account_matching"] = "FIXED - Enhanced pattern recognition"
+    systems["join_detection"] = "FIXED - Relationship analysis improved"
+    
     systems["core_modules"] = "available" if CORE_MODULES_AVAILABLE else "unavailable"
     systems["dashboard_routes"] = "available" if DASHBOARD_AVAILABLE else "unavailable"
-    systems["dashboard_endpoints"] = "enabled"
-    systems["consolidated_table"] = "available"
-    systems["mcp_schema_discovery"] = "enabled"
-    systems["information_schema_fallback"] = "enabled"
-    systems["intelligent_table_selection"] = "enabled"
     
     systems["openai_key"] = "configured" if os.getenv("OPENAI_API_KEY") else "missing"
     systems["supabase_url"] = "configured" if os.getenv("SUPABASE_URL") else "missing"
     systems["supabase_key"] = "configured" if os.getenv("SUPABASE_ANON_KEY") else "missing"
-    systems["google_credentials"] = "configured" if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") else "missing"
-    
-    if CORE_MODULES_AVAILABLE:
-        try:
-            db_health = db.health_check()
-            systems["database"] = db_health.get("status", "unknown")
-        except Exception as e:
-            systems["database"] = f"error: {str(e)[:50]}"
-    else:
-        systems["database"] = "unavailable"
     
     systems["openai_client"] = "available (gpt-4o)" if openai_client else "unavailable"
     systems["supabase_client"] = "available" if supabase_client else "unavailable"
     
+    # Test enhanced intelligent discovery
     try:
-        datasets = await discover_all_datasets()
-        systems["bigquery_discovery"] = f"healthy ({sum(len(ds) for ds in datasets.values())} datasets)"
+        result = await intelligent_bigquery_mcp.discover_and_cache_metadata(force_refresh=False)
+        tables_count = result.get('tables_discovered', len(intelligent_bigquery_mcp._table_cache))
+        
+        # Count platform tables
+        platform_counts = {}
+        for table_name, table_info in intelligent_bigquery_mcp._table_cache.items():
+            for tag in table_info.get('semantic_tags', []):
+                if tag in intelligent_bigquery_mcp._semantic_mapping:
+                    platform_counts[tag] = platform_counts.get(tag, 0) + 1
+        
+        systems["enhanced_discovery"] = f"healthy ({tables_count} tables, platforms: {dict(list(platform_counts.items())[:3])})"
     except Exception as e:
-        systems["bigquery_discovery"] = f"error: {str(e)[:50]}"
+        systems["enhanced_discovery"] = f"error: {str(e)[:50]}"
     
-    # Test dashboard connectivity
-    try:
-        test_query = "SELECT COUNT(*) as test_count FROM `data-tables-for-zoho.new_data_tables.consolidated_master` LIMIT 1"
-        test_result = await bigquery_mcp.execute_sql(test_query)
-        if test_result.get("isError"):
-            systems["dashboard_data"] = "error: query failed"
-        else:
-            systems["dashboard_data"] = "healthy"
-    except Exception as e:
-        systems["dashboard_data"] = f"error: {str(e)[:50]}"
+    critical_systems = ["openai_key", "supabase_url", "enhanced_discovery"]
+    healthy_systems = sum(1 for sys in critical_systems 
+                         if "configured" in str(systems.get(sys, "")) or "healthy" in str(systems.get(sys, "")))
     
-    systems["discovery_cache"] = f"active ({len(discovery_cache.last_discovery)} cached items)"
-    systems["enhanced_dynamic_features"] = "enabled (mcp_schema + intelligent_selection + gpt4o + zero_hardcoding)"
-    systems["four_week_rolling_window"] = "enabled"
-    
-    critical_systems = ["openai_key", "supabase_url", "supabase_key", "dashboard_data"]
-    healthy_systems = sum(1 for sys in critical_systems if "configured" in str(systems.get(sys, "")) or "healthy" in str(systems.get(sys, "")))
-    
-    if healthy_systems >= 3:
-        overall_status = "enhanced_dynamic_healthy"
-    elif healthy_systems >= 2:
-        overall_status = "enhanced_dynamic_degraded"
+    if healthy_systems >= 2:
+        overall_status = "enhanced_intelligent_v3_2_healthy"
+    elif healthy_systems >= 1:
+        overall_status = "enhanced_intelligent_v3_2_degraded"
     else:
-        overall_status = "enhanced_dynamic_offline"
+        overall_status = "enhanced_intelligent_v3_2_offline"
     
     return HealthResponse(
         status=overall_status,
@@ -1900,7 +1064,7 @@ async def health_check():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on app shutdown"""
-    await bigquery_mcp.close()
+    await intelligent_bigquery_mcp.close()
 
 if __name__ == "__main__":
     import uvicorn
@@ -1908,12 +1072,12 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info(f"Starting Enhanced Dynamic System v{VERSION}")
+    logger.info(f"Starting FIXED Enhanced Intelligent Query Generation System v{VERSION}")
     logger.info(f"Server: {host}:{port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'unknown')}")
-    logger.info(f"Features: MCP Schema Discovery + Intelligent Table Selection + GPT-4o + Zero Hardcoding")
-    logger.info(f"BigQuery MCP: {bigquery_mcp.server_url}")
-    logger.info(f"Enhanced Dynamic: MCP-powered + Information Schema + Truly Dynamic SQL Generation")
+    logger.info(f"FIXED Features: Platform Detection + Enhanced Relevance + Intelligent SQL + Schema Analysis + GPT-4o")
+    logger.info(f"BigQuery MCP: {intelligent_bigquery_mcp.server_url}")
+    logger.info(f"FIXES in v{VERSION}: Microsoft Ads detection, relevance scoring, column mapping, SQL generation")
     
     uvicorn.run(
         "main:app",
@@ -1921,4 +1085,4 @@ if __name__ == "__main__":
         port=port,
         reload=os.getenv("ENVIRONMENT") == "development",
         log_level="info"
-    ),
+    )
