@@ -1,4 +1,4 @@
-# api/enhanced_bigquery_mcp.py - FIXED Dynamic Intelligent Query Generation
+# api/enhanced_bigquery_mcp.py - COMPLETE Enhanced Dynamic Intelligent Query Generation v3.3.0
 import asyncio
 import json
 import aiohttp
@@ -43,14 +43,18 @@ class IntelligentBigQueryMCP:
                 'metrics': ['clicks', 'impressions', 'spend', 'conversions', 'ctr', 'cpc'],
                 'table_patterns': ['msads', 'microsoft_ads', 'bing']
             },
-            
+            'shipstation': { 
+                'keywords': ['shipstation', 'shipping', 'shipment', 'orders', 'fulfillment'],
+                'platforms': ['ShipStation', 'Shipping'],
+                'metrics': ['orders', 'shipments', 'items'],
+                'table_patterns': ['shipstation_', 'shipstation', 'shipping_'] 
+            },
             'facebook_ads': {
                 'keywords': ['facebook', 'meta', 'fb', 'instagram'],
                 'platforms': ['Facebook', 'Meta', 'Instagram'],
                 'metrics': ['clicks', 'impressions', 'spend', 'reach', 'frequency'],
-                'table_patterns': ['facebook_ads', 'facebook', 'meta', 'fb_ads', 'fb']  # Added 'facebook_ads' and 'fb'
+                'table_patterns': ['facebook_ads', 'facebook', 'meta', 'fb_ads', 'fb']
             },
-
             'analytics': {
                 'keywords': ['ga4', 'analytics', 'google_analytics', 'sessions'],
                 'platforms': ['Google Analytics', 'GA4'],
@@ -422,6 +426,297 @@ class IntelligentBigQueryMCP:
             'discovery_timestamp': self._last_discovery.isoformat() if self._last_discovery else None
         }
 
+    def _analyze_table_semantics_enhanced(self, table_name: str, schema: Dict) -> List[str]:
+        """Enhanced semantic analysis with FIXED single platform per table"""
+        tags = []
+        table_lower = table_name.lower()
+        
+        # Platform detection with confidence scoring
+        platform_confidence = {}
+        for platform, config in self._semantic_mapping.items():
+            confidence = 0
+            for pattern in config['table_patterns']:
+                if pattern in table_lower:
+                    confidence += 2  # Higher weight for table name matches
+            
+            # Check schema for platform-specific columns
+            if schema:
+                columns = self._extract_schema_columns_enhanced(schema)
+                platform_metrics = config['metrics']
+                for col in columns['metrics']:
+                    col_lower = col.lower()
+                    for metric in platform_metrics:
+                        if metric in col_lower:
+                            confidence += 1
+                            break
+            
+            if confidence > 0:
+                platform_confidence[platform] = confidence
+        
+        # FIXED: Add ONLY the single highest confidence platform
+        if platform_confidence:
+            best_platform = max(platform_confidence.items(), key=lambda x: x[1])
+            platform_name = best_platform[0]
+            platform_score = best_platform[1]
+            
+            # Only add platform if confidence is meaningful (score >= 2)
+            if platform_score >= 2:
+                tags.append(platform_name)
+                logger.info(f"Table {table_name}: Tagged with single platform '{platform_name}' (confidence: {platform_score})")
+        
+        # Add functional tags based on schema analysis
+        if schema:
+            columns = self._extract_schema_columns_enhanced(schema)
+            
+            if columns['metrics']:
+                tags.extend(['advertising', 'performance'])
+            
+            if columns['campaign']:
+                tags.append('campaign_data')
+                
+            if columns['conversion']:
+                tags.append('conversion_data')
+        
+        # Add structural tags
+        if 'daily' in table_lower:
+            tags.append('daily_data')
+        if 'account' in table_lower:
+            tags.append('account_level')
+        if 'campaign' in table_lower:
+            tags.append('campaign_level')
+        if 'ad' in table_lower and 'ad_group' not in table_lower:
+            tags.append('ad_level')
+        
+        return list(set(tags))  # Remove duplicates
+
+    # === MULTI-TABLE ANALYSIS CAPABILITIES ===
+    
+    class TableRelationshipMapper:
+        """Maps relationships between tables for complex multi-platform queries"""
+        
+        def __init__(self, mcp_instance):
+            self.mcp = mcp_instance
+            
+        def detect_cross_platform_intent(self, query_text: str) -> Dict[str, Any]:
+            """Detect if query requires multiple platforms"""
+            query_lower = query_text.lower()
+            
+            platforms_mentioned = []
+            for platform, config in self.mcp._semantic_mapping.items():
+                for keyword in config['keywords']:
+                    if keyword in query_lower:
+                        platforms_mentioned.append(platform)
+                        break
+            
+            # Look for comparison keywords
+            comparison_keywords = ['compare', 'vs', 'versus', 'correlation', 'correlate', 'against', 'with']
+            has_comparison = any(word in query_lower for word in comparison_keywords)
+            
+            return {
+                'is_multi_platform': len(platforms_mentioned) > 1,
+                'platforms_mentioned': list(set(platforms_mentioned)),
+                'has_comparison_intent': has_comparison,
+                'query_type': 'cross_platform_analysis' if len(platforms_mentioned) > 1 else 'single_platform'
+            }
+        
+        def find_joinable_tables(self, primary_tables: List[Dict]) -> List[Dict[str, Any]]:
+            """Find tables that can be joined for multi-platform analysis"""
+            joinable_combinations = []
+            
+            for i, table1 in enumerate(primary_tables):
+                for j, table2 in enumerate(primary_tables[i+1:], i+1):
+                    # Check for common join columns
+                    schema1 = self.mcp._extract_schema_columns_enhanced(table1.get('schema', {}))
+                    schema2 = self.mcp._extract_schema_columns_enhanced(table2.get('schema', {}))
+                    
+                    # Find common columns
+                    common_cols = set(schema1['all']) & set(schema2['all'])
+                    
+                    # Prioritize account and date columns for joins
+                    join_candidates = []
+                    for col in common_cols:
+                        if any(identifier in col.lower() for identifier in ['account', 'date', 'customer']):
+                            join_candidates.append(col)
+                    
+                    if join_candidates:
+                        joinable_combinations.append({
+                            'table1': table1,
+                            'table2': table2,
+                            'join_columns': join_candidates,
+                            'join_type': 'INNER JOIN' if 'account' in str(join_candidates).lower() else 'LEFT JOIN'
+                        })
+            
+            return joinable_combinations
+    
+    class ComplexQueryProcessor:
+        """Processes complex multi-table queries"""
+        
+        def __init__(self, mcp_instance):
+            self.mcp = mcp_instance
+            self.relationship_mapper = self.mcp.TableRelationshipMapper(mcp_instance)
+        
+        async def process_multi_platform_query(self, query_text: str, relevant_tables: List[Dict]) -> Dict[str, Any]:
+            """Process queries that span multiple platforms"""
+            
+            cross_platform_intent = self.relationship_mapper.detect_cross_platform_intent(query_text)
+            
+            if not cross_platform_intent['is_multi_platform']:
+                return await self._process_single_platform_enhanced(query_text, relevant_tables)
+            
+            # Group tables by platform
+            platform_tables = {}
+            for table in relevant_tables[:4]:  # Limit to top 4 tables
+                tags = table.get('semantic_tags', [])
+                platform = None
+                for tag in tags:
+                    if tag in self.mcp._semantic_mapping:
+                        platform = tag
+                        break
+                
+                if platform:
+                    if platform not in platform_tables:
+                        platform_tables[platform] = []
+                    platform_tables[platform].append(table)
+            
+            # Check if we can join tables
+            if cross_platform_intent['has_comparison_intent']:
+                return await self._build_comparison_query(query_text, platform_tables, cross_platform_intent)
+            else:
+                return await self._build_union_query(query_text, platform_tables, cross_platform_intent)
+        
+        async def _build_comparison_query(self, query_text: str, platform_tables: Dict, intent: Dict) -> Dict[str, Any]:
+            """Build queries that compare metrics across platforms"""
+            
+            sql_parts = []
+            cte_definitions = []
+            
+            for platform, tables in platform_tables.items():
+                if not tables:
+                    continue
+                    
+                primary_table = tables[0]
+                schema = self.mcp._extract_schema_columns_enhanced(primary_table.get('schema', {}))
+                
+                # Build platform-specific CTE
+                select_parts = []
+                if schema['date']:
+                    select_parts.append(f"DATE({schema['date'][0]}) as analysis_date")
+                if schema['account']:
+                    select_parts.append(f"{schema['account'][0]} as account_name")
+                
+                # Add key metrics with platform prefix
+                metrics_added = 0
+                for col in schema['metrics'][:3]:  # Limit metrics
+                    select_parts.append(f"SUM(CAST({col} AS FLOAT64)) as {platform}_{col.lower()}")
+                    metrics_added += 1
+                
+                if select_parts:
+                    table_name = f"`{primary_table['dataset']}.{primary_table['table']}`"
+                    cte_sql = f"""
+{platform}_data AS (
+  SELECT {', '.join(select_parts)}
+  FROM {table_name}
+  WHERE DATE({schema['date'][0]}) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  GROUP BY analysis_date, account_name
+)"""
+                    cte_definitions.append(cte_sql)
+            
+            if len(cte_definitions) >= 2:
+                # Build comparison query
+                final_sql = f"""
+WITH {','.join(cte_definitions)}
+SELECT 
+  COALESCE(t1.analysis_date, t2.analysis_date) as date,
+  COALESCE(t1.account_name, t2.account_name) as account,
+  t1.*,
+  t2.*
+FROM {list(platform_tables.keys())[0]}_data t1
+FULL OUTER JOIN {list(platform_tables.keys())[1]}_data t2
+  ON t1.analysis_date = t2.analysis_date 
+  AND t1.account_name = t2.account_name
+ORDER BY date DESC
+LIMIT 100
+"""
+                
+                return {
+                    'sql': final_sql,
+                    'query_type': 'cross_platform_comparison',
+                    'platforms_analyzed': list(platform_tables.keys()),
+                    'explanation': f"Comparing metrics across {', '.join(platform_tables.keys())} platforms"
+                }
+        
+        async def _build_union_query(self, query_text: str, platform_tables: Dict, intent: Dict) -> Dict[str, Any]:
+            """Build queries that union data from multiple platforms"""
+            
+            union_parts = []
+            
+            for platform, tables in platform_tables.items():
+                if not tables:
+                    continue
+                    
+                primary_table = tables[0]
+                schema = self.mcp._extract_schema_columns_enhanced(primary_table.get('schema', {}))
+                
+                select_parts = [f"'{platform}' as platform"]
+                if schema['date']:
+                    select_parts.append(f"DATE({schema['date'][0]}) as date")
+                if schema['account']:
+                    select_parts.append(f"{schema['account'][0]} as account_name")
+                
+                # Standardize metric names
+                if schema['metrics']:
+                    # Find cost/spend metric
+                    cost_metric = next((col for col in schema['metrics'] 
+                                      if any(term in col.lower() for term in ['cost', 'spend'])), None)
+                    if cost_metric:
+                        select_parts.append(f"SUM(CAST({cost_metric} AS FLOAT64)) as total_spend")
+                    
+                    # Find clicks metric
+                    clicks_metric = next((col for col in schema['metrics'] 
+                                        if 'click' in col.lower()), None)
+                    if clicks_metric:
+                        select_parts.append(f"SUM(CAST({clicks_metric} AS FLOAT64)) as total_clicks")
+                
+                table_name = f"`{primary_table['dataset']}.{primary_table['table']}`"
+                union_sql = f"""
+SELECT {', '.join(select_parts)}
+FROM {table_name}
+WHERE DATE({schema['date'][0]}) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+GROUP BY platform, date, account_name"""
+                
+                union_parts.append(union_sql)
+            
+            if len(union_parts) >= 2:
+                final_sql = f"""
+{' UNION ALL '.join(union_parts)}
+ORDER BY date DESC, platform
+LIMIT 200
+"""
+                
+                return {
+                    'sql': final_sql,
+                    'query_type': 'multi_platform_union',
+                    'platforms_analyzed': list(platform_tables.keys()),
+                    'explanation': f"Combined data from {', '.join(platform_tables.keys())} platforms"
+                }
+        
+        async def _process_single_platform_enhanced(self, query_text: str, relevant_tables: List[Dict]) -> Dict[str, Any]:
+            """Enhanced single platform processing"""
+            primary_table = relevant_tables[0]
+            
+            # Use the existing intelligent SQL generation
+            account_name = self.mcp._extract_account_name_from_question_enhanced(query_text)
+            query_intent = self.mcp._analyze_query_intent_enhanced(query_text)
+            
+            sql = await self.mcp._generate_intelligent_sql(query_text, primary_table, account_name, query_intent)
+            
+            return {
+                'sql': sql,
+                'query_type': 'single_platform_enhanced',
+                'primary_table': primary_table['table_name'],
+                'explanation': f"Enhanced analysis of {query_intent.get('primary_platform', 'data')} performance"
+            }
+
     def _build_intelligent_select_clause(self, question: str, columns: Dict[str, List[str]], query_intent: Dict[str, Any]) -> List[str]:
         """Build SELECT clause using enhanced column analysis and query intent"""
         select_parts = []
@@ -716,69 +1011,6 @@ class IntelligentBigQueryMCP:
         except Exception as e:
             logger.error(f"Enhanced metadata discovery failed: {e}")
             raise
-    
-    def _analyze_table_semantics_enhanced(self, table_name: str, schema: Dict) -> List[str]:
-        """Enhanced semantic analysis with FIXED single platform per table"""
-        tags = []
-        table_lower = table_name.lower()
-        
-        # Platform detection with confidence scoring
-        platform_confidence = {}
-        for platform, config in self._semantic_mapping.items():
-            confidence = 0
-            for pattern in config['table_patterns']:
-                if pattern in table_lower:
-                    confidence += 2  # Higher weight for table name matches
-            
-            # Check schema for platform-specific columns
-            if schema:
-                columns = self._extract_schema_columns_enhanced(schema)
-                platform_metrics = config['metrics']
-                for col in columns['metrics']:
-                    col_lower = col.lower()
-                    for metric in platform_metrics:
-                        if metric in col_lower:
-                            confidence += 1
-                            break
-            
-            if confidence > 0:
-                platform_confidence[platform] = confidence
-        
-        # FIXED: Add ONLY the single highest confidence platform
-        if platform_confidence:
-            best_platform = max(platform_confidence.items(), key=lambda x: x[1])
-            platform_name = best_platform[0]
-            platform_score = best_platform[1]
-            
-            # Only add platform if confidence is meaningful (score >= 2)
-            if platform_score >= 2:
-                tags.append(platform_name)
-                logger.info(f"Table {table_name}: Tagged with single platform '{platform_name}' (confidence: {platform_score})")
-        
-        # Add functional tags based on schema analysis
-        if schema:
-            columns = self._extract_schema_columns_enhanced(schema)
-            
-            if columns['metrics']:
-                tags.extend(['advertising', 'performance'])
-            
-            if columns['campaign']:
-                tags.append('campaign_data')
-                
-            if columns['conversion']:
-                tags.append('conversion_data')
-        
-        # Add structural tags
-        if 'daily' in table_lower:
-            tags.append('daily_data')
-        if 'account' in table_lower:
-            tags.append('account_level')
-        if 'campaign' in table_lower:
-            tags.append('campaign_level')
-        if 'ad' in table_lower and 'ad_group' not in table_lower:
-            tags.append('ad_level')
-        
-        return list(set(tags))  # Remove duplicates
 
     async def _analyze_table_relationships(self):
         """Enhanced relationship analysis"""
@@ -847,7 +1079,7 @@ class IntelligentBigQueryMCP:
         return suggestions[:5]  # Return top 5 suggestions
 
     async def generate_intelligent_sql(self, query_text: str, context: Dict = None) -> Dict[str, Any]:
-        """Generate SQL with enhanced intelligent table discovery and dynamic SQL generation."""
+        """Generate SQL with enhanced intelligent table discovery and multi-table capabilities."""
         
         # Discover relevant tables with enhanced logic
         discovery_result = await self.intelligent_table_discovery(query_text)
@@ -863,7 +1095,36 @@ class IntelligentBigQueryMCP:
                 "suggestion": f"Try being more specific about the data source. Detected intent: {query_intent.get('primary_platform', 'unclear')}"
             }
         
-        # Extract account name with enhanced logic
+        # Initialize multi-table processor
+        complex_processor = self.ComplexQueryProcessor(self)
+        
+        # Check if this is a multi-platform/complex query
+        cross_platform_intent = complex_processor.relationship_mapper.detect_cross_platform_intent(query_text)
+        
+        if cross_platform_intent['is_multi_platform'] or cross_platform_intent['has_comparison_intent']:
+            logger.info(f"Processing multi-platform query: {cross_platform_intent}")
+            try:
+                multi_result = await complex_processor.process_multi_platform_query(query_text, relevant_tables)
+                
+                return {
+                    "status": "multi_platform_sql_generated",
+                    "sql_query": multi_result['sql'],
+                    "query_type": multi_result['query_type'], 
+                    "platforms_analyzed": multi_result.get('platforms_analyzed', []),
+                    "explanation": multi_result.get('explanation', ''),
+                    "table_context": {
+                        "available_tables": relevant_tables[:4],
+                        "query_intent": query_intent,
+                        "cross_platform_intent": cross_platform_intent,
+                        "complexity": "high"
+                    },
+                    "discovery_result": discovery_result
+                }
+            except Exception as e:
+                logger.error(f"Multi-platform processing failed: {e}")
+                # Fall back to single table processing
+        
+        # Single table processing (enhanced)
         account_name = self._extract_account_name_from_question_enhanced(query_text)
         logger.info(f"Enhanced account extraction result: {account_name}")
         
