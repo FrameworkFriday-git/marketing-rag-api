@@ -881,7 +881,7 @@ class IntegratedIntelligentProcessor:
                     "processing_method": "enhanced_mcp_execution_failed"
                 }
             
-            # Format results
+            # Format resultsts
             formatted_answer = await self._format_results_intelligently(
                 result, question, sql_query, selected_table, detected_platform
             )
@@ -1001,59 +1001,52 @@ class IntegratedIntelligentProcessor:
             }
     
     async def _format_results_intelligently(self, result: dict, question: str, 
-                                          sql_query: str, table_name: str, platform: str) -> str:
-        """Format results with intelligent analysis"""
+                                      sql_query: str, table_name: str, platform: str) -> str:
+        """SIMPLIFIED: Format results with SQL query visibility"""
         
         if not result.get('content'):
-            return f"No data found for: {question}"
+            return f"No data found for: {question}\n\nSQL Query Used:\n{sql_query}"
         
-        if not openai_client:
-            return f"Retrieved {len(result['content'])} records from {table_name} ({platform.upper()}) for: {question}"
+        # ALWAYS show the SQL query first
+        response_parts = []
+        response_parts.append(f"SQL Query Executed:\n{sql_query}")
+        response_parts.append(f"\nTable: {table_name}")
+        response_parts.append(f"Platform: {platform.upper()}")
+        response_parts.append(f"Records Found: {len(result['content'])}")
+        response_parts.append("\n" + "="*50 + "\n")
         
-        try:
-            # Extract data
-            raw_data = []
-            for item in result['content'][:5]:  # Limit to first 5 rows
-                if isinstance(item, dict) and 'text' in item:
-                    raw_data.append(item['text'])
-            
-            data_text = '\n'.join(raw_data)
-            
-            prompt = f"""Analyze this {platform.upper().replace('_', ' ')} data and provide insights for: "{question}"
+        # Format the data simply
+        if openai_client:
+            try:
+                raw_data = []
+                for item in result['content'][:3]:  # Just first 3 rows
+                    if isinstance(item, dict) and 'text' in item:
+                        raw_data.append(item['text'])
+                
+                data_text = '\n'.join(raw_data)
+                
+                prompt = f"""Analyze this data for: "{question}"
 
-Data from table: {table_name}
-SQL used: {sql_query}
+    Raw data from {table_name}:
+    {data_text}
 
-Raw data:
-{data_text}
+    Provide key insights in plain text format."""
 
-Format requirements:
-1. Use plain text only (no markdown)
-2. Start with key findings
-3. Use bullet points with "•" 
-4. Include specific numbers from the data
-5. Keep it concise and actionable
-6. Mention the data source platform
-
-Provide analysis:"""
-
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Cost-effective model
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=400,
-                temperature=0.3
-            )
-            
-            formatted_response = response.choices[0].message.content.strip()
-            
-            # Add source info
-            formatted_response += f"\n\n---\nData source: {table_name} ({platform.upper()}) | {len(result['content'])} records | Enhanced v{VERSION}"
-            
-            return formatted_response
-            
-        except Exception as e:
-            logger.error(f"Result formatting failed: {e}")
-            return f"Retrieved {len(result['content'])} records from {table_name} ({platform.upper()}) for: {question}"
+                ai_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=300,
+                    temperature=0.3
+                )
+                
+                response_parts.append(ai_response.choices[0].message.content.strip())
+                
+            except Exception as e:
+                response_parts.append(f"Data retrieved successfully. AI formatting failed: {str(e)}")
+        else:
+            response_parts.append(f"Successfully retrieved {len(result['content'])} records.")
+        
+        return '\n'.join(response_parts)
 
 # MULTI-TABLE RELATIONSHIP DISCOVERY AND ANALYSIS
 class TableRelationshipMapper:
@@ -2330,30 +2323,125 @@ async def health_check():
 
 @app.post("/query", response_model=QueryResponse)
 async def unified_query(request: UnifiedQueryRequest):
-    """Unified query endpoint with enhanced routing and validation"""
+    """SIMPLIFIED: Direct query processing that actually works"""
     start_time = time.time()
     
     try:
         if request.data_source == "bigquery":
-            # Use enhanced integrated processing with multi-table capabilities
-            result = await enhanced_integrated_processor.process_query_with_intelligence(request.question)
-            
-            # Format response according to style
-            if request.preferred_style != "standard":
-                result["answer"] = await format_response_by_style(
-                    result["answer"], request.preferred_style, request.question
+            # Check for table listing first
+            table_result = await handle_bigquery_tables_query_dynamic(request.question)
+            if table_result is not None:
+                return QueryResponse(
+                    answer=table_result["answer"],
+                    query_type="table_listing",
+                    processing_method=table_result.get("processing_method", "table_listing"),
+                    sources_used=1,
+                    processing_time=table_result.get("processing_time", 0),
+                    response_style=request.preferred_style
                 )
             
-            return QueryResponse(
-                answer=result["answer"],
-                query_type=result.get("analysis_type", result.get("platform_detected", "unknown")),
-                processing_method=result.get("processing_method", "unknown"),
-                sources_used=len(result.get("platforms_analyzed", [])) if result.get("platforms_analyzed") else 1,
-                processing_time=result.get("processing_time", time.time() - start_time),
-                response_style=request.preferred_style
-            )
+            # Use Enhanced MCP DIRECTLY - stop over-engineering
+            if ENHANCED_MCP_AVAILABLE:
+                logger.info("Using Enhanced MCP directly")
+                try:
+                    # Let the Enhanced MCP handle everything
+                    context_result = await intelligent_bigquery_mcp.generate_intelligent_sql(request.question)
+                    
+                    if context_result.get("status") == "multi_platform_sql_generated":
+                        # Multi-platform result from Enhanced MCP
+                        result = await intelligent_bigquery_mcp.execute_sql(context_result["sql_query"])
+                        if result and result.get("content"):
+                            answer = f"Multi-Platform Analysis:\nSQL: {context_result['sql_query']}\n\nPlatforms: {', '.join(context_result.get('platforms_analyzed', []))}\n\nResults: {len(result['content'])} records found."
+                        else:
+                            answer = f"Multi-platform query generated but no results: {context_result['sql_query']}"
+                            
+                        return QueryResponse(
+                            answer=answer,
+                            query_type="multi_platform",
+                            processing_method="enhanced_mcp_multi_platform",
+                            sources_used=len(context_result.get('platforms_analyzed', [])),
+                            processing_time=time.time() - start_time,
+                            response_style=request.preferred_style
+                        )
+                    
+                    elif context_result.get("status") == "context_generated":
+                        # Single platform result
+                        table_context = context_result["table_context"]
+                        sql_query = table_context.get("generated_sql")
+                        
+                        if sql_query:
+                            # Execute the SQL
+                            result = await intelligent_bigquery_mcp.execute_sql(sql_query)
+                            
+                            if result and result.get("content"):
+                                # Use simplified formatting
+                                best_table = table_context["available_tables"][0] if table_context["available_tables"] else {}
+                                table_name = best_table.get("table_name", "unknown")
+                                platform = context_result["query_intent"].get("primary_platform", "unknown")
+                                
+                                formatted_answer = await enhanced_integrated_processor._format_results_intelligently(
+                                    result, request.question, sql_query, table_name, platform
+                                )
+                                
+                                return QueryResponse(
+                                    answer=formatted_answer,
+                                    query_type=platform,
+                                    processing_method="enhanced_mcp_success",
+                                    sources_used=1,
+                                    processing_time=time.time() - start_time,
+                                    response_style=request.preferred_style
+                                )
+                            else:
+                                return QueryResponse(
+                                    answer=f"Query executed but no results found.\n\nSQL: {sql_query}",
+                                    query_type="no_results",
+                                    processing_method="enhanced_mcp_no_results",
+                                    sources_used=0,
+                                    processing_time=time.time() - start_time,
+                                    response_style=request.preferred_style
+                                )
+                        else:
+                            return QueryResponse(
+                                answer="Enhanced MCP failed to generate SQL query.",
+                                query_type="error",
+                                processing_method="enhanced_mcp_sql_generation_failed",
+                                sources_used=0,
+                                processing_time=time.time() - start_time,
+                                response_style=request.preferred_style
+                            )
+                    else:
+                        # No relevant tables
+                        return QueryResponse(
+                            answer=context_result.get("message", "No relevant tables found for query."),
+                            query_type="no_tables",
+                            processing_method="enhanced_mcp_no_tables",
+                            sources_used=0,
+                            processing_time=time.time() - start_time,
+                            response_style=request.preferred_style
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"Enhanced MCP failed: {e}")
+                    # Fall back to basic processing
+                    return QueryResponse(
+                        answer=f"Enhanced MCP processing failed: {str(e)}\n\nFalling back to basic processing not implemented.",
+                        query_type="error",
+                        processing_method="enhanced_mcp_failed",
+                        sources_used=0,
+                        processing_time=time.time() - start_time,
+                        response_style=request.preferred_style
+                    )
+            else:
+                return QueryResponse(
+                    answer="Enhanced MCP not available. Basic BigQuery processing not implemented in this version.",
+                    query_type="error",
+                    processing_method="enhanced_mcp_unavailable",
+                    sources_used=0,
+                    processing_time=time.time() - start_time,
+                    response_style=request.preferred_style
+                )
         
-        else:  # RAG processing
+        else:  # RAG processing - keep existing
             query_classification = classify_query(request.question)
             
             if query_classification["type"] in ["temporal_complex", "marketing_general"]:
@@ -2364,13 +2452,8 @@ async def unified_query(request: UnifiedQueryRequest):
             else:
                 rag_result = await simple_supabase_search(request.question)
             
-            # Format response according to style
-            formatted_answer = await format_response_by_style(
-                rag_result["answer"], request.preferred_style, request.question
-            )
-            
             return QueryResponse(
-                answer=formatted_answer,
+                answer=rag_result["answer"],
                 query_type=query_classification["type"],
                 processing_method=rag_result["method"],
                 sources_used=rag_result["sources"],
@@ -2380,7 +2463,14 @@ async def unified_query(request: UnifiedQueryRequest):
     
     except Exception as e:
         logger.error(f"Query processing error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return QueryResponse(
+            answer=f"Query processing failed: {str(e)}",
+            query_type="error",
+            processing_method="system_error",
+            sources_used=0,
+            processing_time=time.time() - start_time,
+            response_style=request.preferred_style
+        )
 
 @app.post("/api/unified-query")
 async def api_unified_query(request: UnifiedQueryRequest):
