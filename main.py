@@ -830,7 +830,7 @@ async def get_consolidated_by_store():
             SUM(New_users) as total_new_users,
             SUM(Pageviews) as total_pageviews
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY online_store
         ORDER BY total_revenue DESC
         """
@@ -863,7 +863,7 @@ async def get_consolidated_by_channel():
             AVG(Bounce_rate) as avg_bounce_rate,
             SUM(Add_To_Carts) as total_add_to_carts
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY Channel_group
         ORDER BY total_revenue DESC
         """
@@ -915,7 +915,7 @@ async def get_consolidated_time_series():
             AVG(Conversion_rate) as avg_conversion_rate,
             SUM(New_users) as daily_new_users
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         GROUP BY Date
         ORDER BY Date ASC
         """
@@ -973,7 +973,7 @@ async def get_channel_summary():
             ROUND((SUM(Sessions) / NULLIF(SUM(Users), 0)), 2) as sessions_per_user,
             ROUND(AVG(Conversion_rate), 2) as avg_conversion_rate
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
           AND Channel_group IS NOT NULL
         GROUP BY Channel_group
         ORDER BY sessions DESC
@@ -1028,7 +1028,7 @@ async def get_consolidated_summary():
             SUM(New_users) as total_new_users,
             SUM(Add_To_Carts) as total_add_to_carts
         FROM `data-tables-for-zoho.new_data_tables.consolidated_master`
-        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
         """
         
         result = await bigquery_mcp.execute_sql(query)
