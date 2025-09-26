@@ -1325,6 +1325,137 @@ class ComplexQueryProcessor:
         
         return with_clause + "\n" + main_query
 
+# Enhanced integrated processor with multi-table capabilities
+class EnhancedIntegratedProcessor(IntegratedIntelligentProcessor):
+    """Enhanced processor with multi-table analysis capabilities"""
+    
+    def __init__(self):
+        super().__init__()
+        self.complex_processor = ComplexQueryProcessor()
+    
+    async def process_query_with_intelligence(self, question: str) -> Dict[str, Any]:
+        """Enhanced processing with multi-table detection and analysis"""
+        
+        # Check if this requires complex multi-table analysis
+        if self.complex_processor.detect_multi_table_need(question):
+            logger.info("MULTI-TABLE QUERY DETECTED - Using complex analysis")
+            return await self._process_complex_multi_table_query(question)
+        else:
+            logger.info("SINGLE-TABLE QUERY - Using standard processing")
+            return await super().process_query_with_intelligence(question)
+    
+    async def _process_complex_multi_table_query(self, question: str) -> Dict[str, Any]:
+        """Process complex queries requiring multiple tables"""
+        
+        try:
+            # Decompose the complex query
+            query_plan = await self.complex_processor.decompose_complex_query(question)
+            logger.info(f"COMPLEX QUERY PLAN: {query_plan}")
+            
+            # Generate multi-table SQL
+            complex_sql = await self.complex_processor.generate_multi_table_sql(query_plan)
+            logger.info(f"COMPLEX SQL GENERATED: {complex_sql[:200]}...")
+            
+            # Execute the complex query
+            mcp_client = intelligent_bigquery_mcp if self.use_enhanced else bigquery_mcp
+            result = await mcp_client.execute_sql(complex_sql)
+            
+            if result.get("isError") or not result.get("content"):
+                # Fallback to single-table processing
+                logger.warning("Complex query failed, falling back to single-table processing")
+                return await super().process_query_with_intelligence(question)
+            
+            # Format complex results
+            formatted_answer = await self._format_complex_results(
+                result, question, complex_sql, query_plan
+            )
+            
+            return {
+                "answer": formatted_answer,
+                "data": result,
+                "sql_query": complex_sql,
+                "query_plan": query_plan,
+                "processing_method": "enhanced_multi_table_analysis",
+                "platforms_analyzed": query_plan.get('platforms', []),
+                "analysis_type": query_plan.get('analysis_type', 'unknown')
+            }
+            
+        except Exception as e:
+            logger.error(f"Complex multi-table processing failed: {e}")
+            # Fallback to standard processing
+            return await super().process_query_with_intelligence(question)
+    
+    async def _format_complex_results(self, result: dict, question: str, 
+                                    sql_query: str, query_plan: Dict) -> str:
+        """Format complex multi-table results for chat display"""
+        
+        if not result.get('content'):
+            return f"No data found for complex analysis: {question}"
+        
+        if not openai_client:
+            platforms = ', '.join(query_plan.get('platforms', []))
+            return f"Retrieved {len(result['content'])} records from multi-table analysis ({platforms}) for: {question}"
+        
+        try:
+            # Extract sample data for analysis
+            raw_data = []
+            for item in result['content'][:10]:  # More data for complex analysis
+                if isinstance(item, dict) and 'text' in item:
+                    raw_data.append(item['text'])
+            
+            data_text = '\n'.join(raw_data)
+            platforms = ', '.join(query_plan.get('platforms', []))
+            analysis_type = query_plan.get('analysis_type', 'comparison')
+            
+            prompt = f"""Analyze this cross-platform marketing data for: "{question}"
+
+ANALYSIS TYPE: {analysis_type}
+PLATFORMS: {platforms}
+SQL QUERY: {sql_query}
+
+CROSS-PLATFORM DATA:
+{data_text}
+
+FORMATTING REQUIREMENTS:
+1. Use plain text only (no markdown)
+2. Start with EXECUTIVE SUMMARY
+3. Break down by platform if comparing multiple platforms
+4. Use bullet points with "•" 
+5. Include specific numbers and comparisons
+6. Identify correlations, trends, and insights
+7. Provide actionable recommendations
+8. Keep it professional and comprehensive
+
+RESPONSE STRUCTURE:
+1. EXECUTIVE SUMMARY: Key findings across all platforms
+2. PLATFORM BREAKDOWN: Individual platform performance
+3. CROSS-PLATFORM INSIGHTS: Relationships and correlations
+4. RECOMMENDATIONS: Actionable next steps
+
+Provide comprehensive multi-platform analysis:"""
+
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,  # More tokens for complex analysis
+                temperature=0.3
+            )
+            
+            formatted_response = response.choices[0].message.content.strip()
+            
+            # Add comprehensive source info
+            formatted_response += f"\n\n---\nCROSS-PLATFORM ANALYSIS\nPlatforms: {platforms}\nData points: {len(result['content'])} records\nAnalysis type: {analysis_type}\nEnhanced Multi-Table v{VERSION}"
+            
+            return formatted_response
+            
+        except Exception as e:
+            logger.error(f"Complex result formatting failed: {e}")
+            platforms = ', '.join(query_plan.get('platforms', []))
+            return f"Retrieved {len(result['content'])} records from cross-platform analysis ({platforms}) for: {question}"
+
+# Initialize the enhanced processor AFTER the class definition
+enhanced_integrated_processor = EnhancedIntegratedProcessor()
+
 # Initialize complex query processor
 complex_query_processor = ComplexQueryProcessor()
 
