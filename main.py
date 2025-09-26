@@ -502,6 +502,241 @@ def advanced_rag_search(question: str) -> Dict:
             "method": "error"
         }
 
+async def handle_bigquery_tables_query_dynamic(question: str) -> Optional[dict]:
+    """Handle table listing using MCP intelligence like Claude Desktop"""
+    try:
+        # Enhanced keywords for table listing
+        table_keywords = [
+            'tables', 'datasets', 'schema', 'list tables', 'show tables', 'data tables',
+            'what are the tables', 'show me tables', 'what tables', 'available tables',
+            'table names', 'list all tables', 'expand', 'expand the names', 'expand names of table',
+            'what data do you have', 'what can I query', 'available data'
+        ]
+        
+        # Check if this is a table listing query
+        is_table_query = any(keyword in question.lower() for keyword in table_keywords)
+        
+        if not is_table_query:
+            return None  # Let MCP SQL handling take over
+        
+        # Use MCP to discover tables intelligently
+        from api.enhanced_bigquery_mcp import MCPPoweredTableSelector
+        table_selector = MCPPoweredTableSelector()
+        
+        logger.info("MCP-Powered table discovery starting...")
+        discovery_start = time.time()
+        
+        # Get all tables with schemas
+        all_tables_with_info = await table_selector._discover_all_tables_with_schemas()
+        discovery_time = time.time() - discovery_start
+        
+        logger.info(f"MCP discovery completed in {discovery_time:.2f}s")
+        
+        # Count and organize results
+        total_projects = len(all_tables_with_info)
+        total_datasets = 0
+        total_tables = 0
+        
+        organized_tables = {}
+        
+        for project, datasets in all_tables_with_info.items():
+            organized_tables[project] = {}
+            
+            for dataset, tables in datasets.items():
+                if tables:  # Only count datasets with tables
+                    total_datasets += 1
+                    total_tables += len(tables)
+                    organized_tables[project][dataset] = list(tables.keys())
+        
+        logger.info(f"MCP Discovery Results: {total_projects} projects, {total_datasets} datasets, {total_tables} tables")
+        
+        # Create comprehensive response
+        if total_tables == 0:
+            answer = "No tables were discovered using MCP. This might indicate:\n\n"
+            answer += "• BigQuery MCP connection issues\n"
+            answer += "• Permission problems with the service account\n" 
+            answer += "• No accessible tables in the datasets\n\n"
+            answer += "Please check the MCP server logs for detailed information."
+        else:
+            answer = f"MCP-Powered Discovery found {total_projects} projects with {total_datasets} datasets and {total_tables} tables:\n\n"
+            
+            table_counter = 1
+            
+            # List by project -> dataset -> tables
+            for project, datasets in organized_tables.items():
+                if datasets:  # Only show projects with tables
+                    answer += f"PROJECT: {project}\n\n"
+                    
+                    for dataset, tables in datasets.items():
+                        if tables:
+                            answer += f"Dataset: {dataset} ({len(tables)} tables)\n\n"
+                            
+                            # Show tables with platform identification
+                            for table in sorted(tables):
+                                platform = identify_table_platform(table)
+                                answer += f"{table_counter}. {table} [{platform}]\n"
+                                table_counter += 1
+                            
+                            answer += "\n"
+            
+            # Add sample questions based on discovered tables
+            answer += "INTELLIGENT SAMPLE QUESTIONS (MCP-powered suggestions):\n\n"
+            
+            sample_questions = generate_intelligent_sample_questions(organized_tables)
+            for question in sample_questions[:6]:
+                answer += f"• {question}\n"
+            
+            answer += f"\nDiscovered using MCP intelligence in {discovery_time:.2f} seconds"
+        
+        return {
+            "answer": answer,
+            "data": {
+                "projects": list(all_tables_with_info.keys()),
+                "organized_tables": organized_tables,
+                "total_projects": total_projects,
+                "total_datasets": total_datasets,
+                "total_tables": total_tables,
+                "discovery_method": "mcp_powered",
+                "discovery_time_seconds": discovery_time,
+                "all_table_names": [
+                    f"{proj}.{ds}.{table}" 
+                    for proj, datasets in organized_tables.items() 
+                    for ds, tables in datasets.items() 
+                    for table in tables
+                ]
+            },
+            "processing_time": discovery_time,
+            "processing_method": f"mcp_powered_v{VERSION}",
+            "version": VERSION
+        }
+        
+    except Exception as e:
+        logger.error(f"MCP-powered table listing error: {e}")
+        logger.error(f"Exception details:", exc_info=True)
+        return {
+            "answer": f"MCP-powered table discovery encountered an error:\n\n{str(e)}\n\nFalling back to basic discovery methods.",
+            "error": str(e),
+            "processing_time": 0.5,
+            "version": f"{VERSION}_error",
+            "discovery_method": "error_fallback"
+        }
+
+def identify_table_platform(table_name: str) -> str:
+    """Identify platform from table name"""
+    table_lower = table_name.lower()
+    
+    if 'shipstation' in table_lower:
+        return 'ShipStation'
+    elif 'gads' in table_lower:
+        return 'Google Ads'
+    elif 'msads' in table_lower:
+        return 'Microsoft Ads'
+    elif 'facebook' in table_lower:
+        return 'Facebook Ads'
+    elif 'zoho' in table_lower:
+        return 'Zoho CRM'
+    elif 'amazon' in table_lower:
+        return 'Amazon'
+    elif 'ga4' in table_lower:
+        return 'GA4 Analytics'
+    elif 'consolidated' in table_lower:
+        return 'Consolidated Analytics'
+    else:
+        return 'Unknown'
+
+def generate_intelligent_sample_questions(organized_tables: Dict) -> List[str]:
+    """Generate intelligent sample questions based on discovered tables"""
+    questions = []
+    
+    # Track platforms found
+    platforms_found = set()
+    
+    for project, datasets in organized_tables.items():
+        for dataset, tables in datasets.items():
+            for table in tables:
+                platform = identify_table_platform(table)
+                platforms_found.add(platform)
+    
+    # Generate platform-specific questions
+    if 'ShipStation' in platforms_found:
+        questions.append("Show me recent ShipStation order fulfillment data")
+        questions.append("What are the shipping metrics for last week?")
+    
+    if 'Google Ads' in platforms_found:
+        questions.append("What are our top performing Google Ads campaigns by ROAS?")
+        questions.append("Show me Google Ads performance metrics for this month")
+    
+    if 'Microsoft Ads' in platforms_found:
+        questions.append("How are our Microsoft Ads campaigns performing?")
+        questions.append("Compare Bing Ads performance vs last month")
+    
+    # Multi-platform questions if multiple platforms exist
+    if len(platforms_found) > 1:
+        questions.append("Compare performance across all advertising platforms")
+        questions.append("Show me a unified view of marketing performance")
+    
+    if 'Consolidated Analytics' in platforms_found:
+        questions.append("Show me the consolidated dashboard summary")
+        questions.append("What's our overall marketing performance?")
+    
+    return questions
+
+# ===== ENHANCED RESULT FORMATTING (replaces format_bigquery_results_like_claude) =====
+
+async def format_bigquery_results_like_claude(result: dict, question: str, sql_query: str) -> str:
+    """Enhanced result formatting with MCP context"""
+    
+    if not openai_client:
+        return f"MCP-Powered Results for: {question}\n\nFound {len(result.get('content', []))} records"
+    
+    try:
+        if not result.get('content'):
+            return f"No data found for: {question}"
+        
+        # Extract data
+        raw_data = []
+        for item in result['content']:
+            if isinstance(item, dict) and 'text' in item:
+                raw_data.append(item['text'])
+        
+        data_text = '\n'.join(raw_data[:20])  # Limit for context
+        
+        # Enhanced analysis prompt with MCP context
+        analysis_prompt = f"""You are analyzing data from a MCP-powered BigQuery system that intelligently selected the optimal table.
+
+ORIGINAL QUESTION: {question}
+
+RAW DATA:
+{data_text}
+
+FORMATTING REQUIREMENTS:
+1. Use ONLY plain text - NO markdown formatting
+2. Start with EXECUTIVE SUMMARY in caps
+3. Use bullet points with "•" character  
+4. Use line breaks for readability
+5. Include specific numbers and insights
+6. Mention that this was MCP-powered table selection
+
+Provide a professional, readable analysis for chat interface."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            max_tokens=800,
+            temperature=0.2
+        )
+        
+        formatted_response = response.choices[0].message.content.strip()
+        
+        # Add MCP attribution
+        formatted_response += f"\n\n---\nMCP-Powered Analysis: {len(result['content'])} records from intelligently selected table"
+        
+        return formatted_response
+        
+    except Exception as e:
+        logger.error(f"MCP result formatting error: {e}")
+        return f"Retrieved {len(result.get('content', []))} records using MCP-powered table selection for: {question}"
+    
 async def format_response_by_style(answer: str, style: str, question: str) -> str:
     """Format response by style - unchanged"""
     if not openai_client or style == "standard":
@@ -980,11 +1215,10 @@ async def unified_query(request: UnifiedQueryRequest):
                 "data_source": "rag"
             }
             
+        
         elif request.data_source == "bigquery":
-            # MCP-POWERED BigQuery processing
-            
             # Check for table listing
-            table_result = await handle_bigquery_tables_query_mcp_powered(request.question)
+            table_result = await handle_bigquery_tables_query_dynamic(request.question)
             
             if table_result is not None:
                 processing_time = time.time() - process_start
@@ -994,16 +1228,17 @@ async def unified_query(request: UnifiedQueryRequest):
                 table_result["sql_query"] = None
                 return table_result
             
-            # MCP-POWERED SQL GENERATION
+            # MCP-POWERED SQL GENERATION (REPLACES OLD SYSTEM)
             logger.info(f"MCP-POWERED: Starting intelligent query processing...")
             mcp_start = time.time()
             
             try:
-                # Use MCP intelligence like Claude Desktop
+                # Use MCP intelligence like Claude Desktop - THIS IS THE KEY CHANGE
                 sql_query, table_info = await intelligent_bigquery_mcp(request.question)
                 mcp_time = time.time() - mcp_start
                 
-                logger.info(f"MCP SQL generation took: {mcp_time:.2f}s")
+                logger.info(f"MCP table selection took: {mcp_time:.2f}s")
+                logger.info(f"Selected table: {'.'.join(table_info) if isinstance(table_info, tuple) else table_info}")
                 logger.info(f"Generated SQL: {sql_query[:200]}...")
                 
                 # Execute SQL
@@ -1035,12 +1270,12 @@ async def unified_query(request: UnifiedQueryRequest):
                 
                 # Format results with MCP context
                 format_start = time.time()
-                formatted_answer = await format_bigquery_results_mcp_enhanced(
-                    result, request.question, sql_query, table_info
+                formatted_answer = await format_bigquery_results_like_claude(
+                    result, request.question, sql_query
                 )
                 format_time = time.time() - format_start
                 
-                logger.info(f"MCP result formatting took: {format_time:.2f}s")
+                logger.info(f"Result formatting took: {format_time:.2f}s")
                 
                 # Final response
                 processing_time = time.time() - process_start
