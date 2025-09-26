@@ -1,4 +1,156 @@
-# api/enhanced_bigquery_mcp.py - MCP-Powered Intelligent System
+# 1. First, fix api/bigquery_mcp.py - Remove the circular import
+# api/bigquery_mcp.py - Basic Working MCP Connector (FIXED)
+import asyncio
+import json
+import aiohttp
+import os
+import logging
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
+
+class BigQueryMCP:
+    def __init__(self):
+        self.server_url = os.getenv("BIGQUERY_MCP_URL", "https://bigquery.fridaysolutions.ai/mcp")
+        self.session = None
+        self.request_id = 0
+
+    async def get_session(self):
+        """Get or create aiohttp session"""
+        if self.session is None or self.session.closed:
+            timeout = aiohttp.ClientTimeout(total=120)
+            self.session = aiohttp.ClientSession(timeout=timeout)
+        return self.session
+
+    async def call_tool(self, tool_name: str, parameters: dict) -> dict:
+        """Call a tool on the MCP server via HTTP"""
+        self.request_id += 1
+        
+        request_data = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": parameters
+            }
+        }
+
+        try:
+            session = await self.get_session()
+            
+            async with session.post(
+                self.server_url,
+                json=request_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                }
+            ) as response:
+                
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"HTTP {response.status}: {error_text}")
+                    return {
+                        "isError": True,
+                        "error": f"HTTP {response.status}: {error_text}"
+                    }
+                
+                response_data = await response.json()
+                
+                if "error" in response_data:
+                    error_msg = response_data['error'].get('message', 'Unknown error')
+                    logger.error(f"MCP Error for {tool_name}: {error_msg}")
+                    return {
+                        "isError": True,
+                        "error": error_msg
+                    }
+                
+                return response_data.get("result", {})
+                
+        except asyncio.TimeoutError:
+            logger.error(f"MCP call timeout: {tool_name}")
+            return {
+                "isError": True,
+                "error": "Request timeout"
+            }
+        except Exception as e:
+            logger.error(f"MCP call failed: {tool_name} - {e}")
+            return {
+                "isError": True,
+                "error": str(e)
+            }
+
+    async def list_dataset_ids(self, project: str = None) -> dict:
+        """List BigQuery datasets"""
+        parameters = {}
+        if project:
+            parameters["project"] = project
+            
+        logger.info(f"Listing datasets for project: {project or 'default'}")
+        return await self.call_tool("list_dataset_ids", parameters)
+
+    async def list_table_ids(self, dataset: str, project: str = None) -> dict:
+        """List tables in a dataset"""
+        parameters = {"dataset": dataset}
+        if project:
+            parameters["project"] = project
+            
+        logger.info(f"Listing tables in dataset: {dataset}")
+        return await self.call_tool("list_table_ids", parameters)
+
+    async def get_table_info(self, dataset: str, table: str, project: str = None) -> dict:
+        """Get table schema and metadata"""
+        parameters = {
+            "dataset": dataset,
+            "table": table
+        }
+        if project:
+            parameters["project"] = project
+            
+        logger.info(f"Getting table info: {dataset}.{table}")
+        return await self.call_tool("get_table_info", parameters)
+
+    async def execute_sql(self, sql: str, dry_run: bool = False) -> dict:
+        """Execute SQL query"""
+        parameters = {
+            "sql": sql,
+            "dry_run": dry_run
+        }
+        
+        logger.info(f"Executing SQL: {sql[:100]}...")
+        
+        result = await self.call_tool("execute_sql", parameters)
+        
+        # Log result summary
+        if result.get("isError"):
+            logger.error(f"SQL execution failed: {result.get('error')}")
+        else:
+            content_count = len(result.get("content", []))
+            logger.info(f"SQL execution successful: {content_count} rows returned")
+        
+        return result
+
+    async def get_dataset_info(self, dataset: str, project: str = None) -> dict:
+        """Get dataset metadata"""
+        parameters = {"dataset": dataset}
+        if project:
+            parameters["project"] = project
+            
+        logger.info(f"Getting dataset info: {dataset}")
+        return await self.call_tool("get_dataset_info", parameters)
+
+    async def close(self):
+        """Close the HTTP session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            logger.info("BigQuery MCP session closed")
+
+# Global instance - FIXED: No circular import
+bigquery_mcp = BigQueryMCP()
+
+# 2. Create api/enhanced_bigquery_mcp.py with proper imports
+# api/enhanced_bigquery_mcp.py - MCP-Powered Intelligent System (FIXED IMPORTS)
 import os
 import logging
 import json
@@ -7,7 +159,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Tuple, Optional
 import asyncio
 
-from api.bigquery_mcp import bigquery_mcp
+# Import the MCP client directly from the module
+from .bigquery_mcp import BigQueryMCP
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +170,8 @@ class MCPPoweredTableSelector:
     def __init__(self):
         self.schema_cache = {}
         self.table_analysis_cache = {}
+        # Create our own MCP instance to avoid circular imports
+        self.mcp_client = BigQueryMCP()
         
     async def intelligent_table_discovery(self, question: str) -> List[Tuple[str, str, str, float]]:
         """Discover relevant tables using MCP's intelligent capabilities"""
@@ -60,14 +215,14 @@ class MCPPoweredTableSelector:
             all_tables[project] = {}
             
             # Get datasets
-            datasets_result = await bigquery_mcp.list_dataset_ids(project)
+            datasets_result = await self.mcp_client.list_dataset_ids(project)
             datasets = self._extract_names_from_mcp_result(datasets_result)
             
             for dataset in datasets:
                 all_tables[project][dataset] = {}
                 
                 # Get tables
-                tables_result = await bigquery_mcp.list_table_ids(dataset, project)
+                tables_result = await self.mcp_client.list_table_ids(dataset, project)
                 table_names = self._extract_names_from_mcp_result(tables_result)
                 
                 for table_name in table_names:
@@ -86,7 +241,7 @@ class MCPPoweredTableSelector:
         
         try:
             # Method 1: Try MCP get_table_info
-            schema_result = await bigquery_mcp.get_table_info(dataset, table, project)
+            schema_result = await self.mcp_client.get_table_info(dataset, table, project)
             
             if schema_result and 'content' in schema_result and schema_result['content']:
                 schema_text = schema_result['content'][0].get('text', '')
@@ -147,7 +302,7 @@ class MCPPoweredTableSelector:
             LIMIT 100
             """
             
-            result = await bigquery_mcp.execute_sql(schema_query)
+            result = await self.mcp_client.execute_sql(schema_query)
             
             if not result.get("isError") and result.get("content"):
                 table_info = {
@@ -404,96 +559,6 @@ class MCPPoweredTableSelector:
         cleaned = raw_name.strip().strip('"').strip("'")
         return cleaned
 
-class MCPUnionQueryDetector:
-    """Detects when queries need union operations across multiple platforms"""
-    
-    def __init__(self, table_selector: MCPPoweredTableSelector):
-        self.table_selector = table_selector
-    
-    async def analyze_union_requirements(self, question: str) -> Dict[str, Any]:
-        """Analyze if question requires union query and which tables"""
-        
-        # Get question analysis
-        question_analysis = self.table_selector._analyze_question_semantics(question)
-        
-        # Union indicators
-        union_keywords = [
-            'compare', 'vs', 'versus', 'comparison', 'both', 'all',
-            'combined', 'total', 'overall', 'across', 'together',
-            'each platform', 'all platforms', 'by platform'
-        ]
-        
-        needs_union = (
-            question_analysis['is_multi_platform'] or
-            any(keyword in question.lower() for keyword in union_keywords)
-        )
-        
-        if not needs_union:
-            return {'needs_union': False}
-        
-        # Find relevant tables for each detected platform
-        platform_tables = {}
-        all_tables = await self.table_selector.intelligent_table_discovery(question)
-        
-        # Group tables by platform
-        for project, dataset, table, score in all_tables:
-            if score > 50:  # Only high-scoring tables
-                table_full_name = f"{project}.{dataset}.{table}"
-                platform = self._detect_table_platform(table)
-                
-                if platform not in platform_tables:
-                    platform_tables[platform] = []
-                
-                platform_tables[platform].append({
-                    'table': table_full_name,
-                    'project': project,
-                    'dataset': dataset,
-                    'table_name': table,
-                    'score': score
-                })
-        
-        return {
-            'needs_union': len(platform_tables) > 1,
-            'platform_tables': platform_tables,
-            'union_type': self._determine_union_type(question),
-            'detected_platforms': list(platform_tables.keys())
-        }
-    
-    def _detect_table_platform(self, table_name: str) -> str:
-        """Detect platform from table name"""
-        table_lower = table_name.lower()
-        
-        if 'shipstation' in table_lower:
-            return 'shipstation'
-        elif 'gads' in table_lower:
-            return 'google_ads'
-        elif 'msads' in table_lower:
-            return 'microsoft_ads'
-        elif 'facebook' in table_lower:
-            return 'facebook_ads'
-        elif 'zoho' in table_lower:
-            return 'zoho_crm'
-        elif 'amazon' in table_lower:
-            return 'amazon'
-        elif 'ga4' in table_lower or 'analytics' in table_lower:
-            return 'analytics'
-        else:
-            return 'unknown'
-    
-    def _determine_union_type(self, question: str) -> str:
-        """Determine type of union operation needed"""
-        question_lower = question.lower()
-        
-        comparison_words = ['compare', 'vs', 'versus', 'difference', 'better', 'best']
-        aggregation_words = ['total', 'sum', 'combined', 'overall', 'all together']
-        
-        if any(word in question_lower for word in comparison_words):
-            return 'comparison'
-        elif any(word in question_lower for word in aggregation_words):
-            return 'aggregation'
-        else:
-            return 'analysis'
-
 # Main integration function
 async def intelligent_bigquery_mcp(question: str) -> Tuple[str, Tuple[str, str, str]]:
     """
@@ -503,15 +568,6 @@ async def intelligent_bigquery_mcp(question: str) -> Tuple[str, Tuple[str, str, 
     
     # Initialize MCP-powered components
     table_selector = MCPPoweredTableSelector()
-    union_detector = MCPUnionQueryDetector(table_selector)
-    
-    # Check if union query is needed
-    union_analysis = await union_detector.analyze_union_requirements(question)
-    
-    if union_analysis['needs_union']:
-        logger.info(f"Union query required for platforms: {union_analysis['detected_platforms']}")
-        sql_query = await _generate_union_sql(question, union_analysis)
-        return sql_query, ("union_query", "multi_platform", "combined")
     
     # Single table query
     scored_tables = await table_selector.intelligent_table_discovery(question)
@@ -528,67 +584,6 @@ async def intelligent_bigquery_mcp(question: str) -> Tuple[str, Tuple[str, str, 
     sql_query = await _generate_smart_sql(question, project, dataset, table, table_info)
     
     return sql_query, (project, dataset, table)
-
-async def _generate_union_sql(question: str, union_analysis: Dict) -> str:
-    """Generate union SQL query"""
-    
-    platform_tables = union_analysis['platform_tables']
-    union_type = union_analysis['union_type']
-    
-    union_parts = []
-    
-    for platform, tables in platform_tables.items():
-        if tables:  # Use highest scoring table for each platform
-            best_table = max(tables, key=lambda x: x['score'])
-            table_full_name = best_table['table']
-            
-            # Generate standardized SELECT for each platform
-            if platform == 'shipstation':
-                select_part = f"""
-                SELECT 
-                    '{platform}' as platform,
-                    DATE(order_date) as date,
-                    store_id as identifier,
-                    COUNT(*) as orders,
-                    SUM(order_total) as total_value
-                FROM `{table_full_name}`
-                WHERE DATE(order_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
-                GROUP BY platform, date, identifier
-                """
-            elif platform in ['google_ads', 'microsoft_ads']:
-                cost_col = 'Cost' if platform == 'google_ads' else 'Spend'
-                select_part = f"""
-                SELECT 
-                    '{platform}' as platform,
-                    DATE(Date) as date,
-                    Campaign_name as identifier,
-                    SUM(CAST(Clicks AS FLOAT64)) as clicks,
-                    SUM(CAST({cost_col} AS FLOAT64)) as total_value
-                FROM `{table_full_name}`
-                WHERE DATE(Date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
-                GROUP BY platform, date, identifier
-                """
-            else:
-                # Generic format
-                select_part = f"""
-                SELECT 
-                    '{platform}' as platform,
-                    DATE(Date) as date,
-                    'N/A' as identifier,
-                    COUNT(*) as metric_count,
-                    0 as total_value
-                FROM `{table_full_name}`
-                WHERE DATE(Date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
-                GROUP BY platform, date
-                """
-            
-            union_parts.append(select_part)
-    
-    # Combine with UNION ALL
-    final_sql = ' UNION ALL '.join(union_parts)
-    final_sql += " ORDER BY date DESC, platform, total_value DESC LIMIT 100"
-    
-    return final_sql
 
 async def _generate_smart_sql(question: str, project: str, dataset: str, 
                             table: str, table_info: Dict) -> str:
