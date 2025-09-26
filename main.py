@@ -1403,7 +1403,7 @@ Detailed response:"""
             return answer
 
         response = openai_client.chat.completions.create(
-            model="gpt-4o",  
+            model="gpt-4o-mini",  # Cost-effective model
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.3
@@ -1928,6 +1928,11 @@ async def unified_query(request: UnifiedQueryRequest):
     except Exception as e:
         logger.error(f"Query processing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/unified-query")
+async def api_unified_query(request: UnifiedQueryRequest):
+    """API unified query endpoint - calls the main unified_query function"""
+    return await unified_query(request)
 
 @app.post("/query-simple")
 async def simple_query(request: QueryRequest):
