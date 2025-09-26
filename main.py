@@ -1,6 +1,5 @@
 # main.py - COMPLETE FIXED Marketing Intelligence API v3.3.0 - Enhanced MCP Integration
 # Version Control: 
-# v2.8.0 - Enhanced Dynamic System: MCP-powered schema discovery, GPT-4o upgrade, zero hardcoding
 # v3.3.0 - Complete Fixed: Platform routing errors, missing dashboard endpoints, broken formatting, enhanced MCP
 
 import os
