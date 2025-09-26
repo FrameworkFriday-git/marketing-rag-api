@@ -813,9 +813,13 @@ class IntegratedIntelligentProcessor:
             return await self._process_with_reliable_method(question)
     
     async def _process_with_enhanced_mcp(self, question: str) -> Dict[str, Any]:
-        """Process using enhanced MCP with validation"""
+        """Process using enhanced MCP with PRE-SELECTION validation"""
         try:
-            logger.info("Using Enhanced MCP processing")
+            logger.info("Using Enhanced MCP processing with pre-filtering")
+            
+            # CRITICAL: Pre-detect platform BEFORE table discovery
+            detected_platform = self.detect_platform_explicitly(question)
+            logger.info(f"PRE-FILTERING: Detected platform = {detected_platform}")
             
             # Use enhanced intelligence to generate SQL
             context_result = await intelligent_bigquery_mcp.generate_intelligent_sql(question)
@@ -824,30 +828,47 @@ class IntegratedIntelligentProcessor:
                 return {
                     "answer": context_result.get("message", "No relevant tables found"),
                     "processing_method": "enhanced_mcp_no_tables",
-                    "platform_detected": context_result.get("query_intent", {}).get("primary_platform"),
+                    "platform_detected": detected_platform,
                     "suggestion": context_result.get("suggestion")
                 }
             
             # Extract generated context
             table_context = context_result["table_context"]
             sql_query = table_context.get("generated_sql")
-            selected_table_info = table_context["available_tables"][0]
+            available_tables = table_context["available_tables"]
+            
+            # CRITICAL: Filter tables by detected platform BEFORE selection
+            filtered_tables = self._filter_tables_by_platform(available_tables, detected_platform)
+            
+            if not filtered_tables:
+                logger.warning(f"No {detected_platform} tables found after filtering, falling back to reliable method")
+                return await self._process_with_reliable_method(question)
+            
+            # Use the first filtered table
+            selected_table_info = filtered_tables[0]
             selected_table = selected_table_info["table_name"]
             
-            # CRITICAL: Validate platform routing
+            # Final validation (should always pass now)
             if not self.validate_platform_table_match(question, selected_table):
                 return {
-                    "answer": f"Platform routing validation failed. Query about {self.detect_platform_explicitly(question)} was incorrectly routed to {selected_table}",
-                    "error": "platform_routing_validation_failed",
+                    "answer": f"Platform routing validation failed even after pre-filtering. Platform: {detected_platform}, Table: {selected_table}",
+                    "error": "platform_routing_validation_failed_critical",
                     "table_used": selected_table,
-                    "detected_platform": self.detect_platform_explicitly(question),
-                    "processing_method": "enhanced_mcp_validation_failed",
-                    "debug_info": {
-                        "query_intent": context_result.get("query_intent"),
-                        "table_semantic_tags": selected_table_info.get("semantic_tags", []),
-                        "relevance_score": selected_table_info.get("relevance_score", 0)
-                    }
+                    "detected_platform": detected_platform,
+                    "processing_method": "enhanced_mcp_critical_failure"
                 }
+            
+            # Regenerate SQL with the correct filtered table if needed
+            if selected_table != table_context["available_tables"][0]["table_name"]:
+                logger.info(f"Regenerating SQL for filtered table: {selected_table}")
+                # Use a simple fallback SQL for the correct table
+                sql_query = f"""
+                SELECT *
+                FROM `{selected_table}`
+                WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+                ORDER BY date DESC
+                LIMIT 20
+                """
             
             # Execute SQL
             logger.info(f"Executing enhanced MCP SQL: {sql_query[:100]}...")
@@ -863,8 +884,7 @@ class IntegratedIntelligentProcessor:
             
             # Format results
             formatted_answer = await self._format_results_intelligently(
-                result, question, sql_query, selected_table, 
-                self.detect_platform_explicitly(question)
+                result, question, sql_query, selected_table, detected_platform
             )
             
             return {
@@ -872,16 +892,49 @@ class IntegratedIntelligentProcessor:
                 "data": result,
                 "sql_query": sql_query,
                 "table_used": selected_table,
-                "platform_detected": self.detect_platform_explicitly(question),
+                "platform_detected": detected_platform,
                 "relevance_score": selected_table_info.get('relevance_score', 0),
-                "processing_method": "enhanced_mcp_success",
-                "validation_status": "platform_routing_validated"
+                "processing_method": "enhanced_mcp_pre_filtered_success",
+                "validation_status": "platform_routing_pre_validated"
             }
             
         except Exception as e:
             logger.error(f"Enhanced MCP processing failed: {e}")
             # Fallback to reliable method
             return await self._process_with_reliable_method(question)
+    
+    def _filter_tables_by_platform(self, tables: List[Dict], platform: str) -> List[Dict]:
+        """Filter tables by platform BEFORE selection"""
+        filtered = []
+        
+        allowed_patterns = self.table_patterns.get(platform, [])
+        
+        for table_info in tables:
+            table_name = table_info.get("table_name", "")
+            table_lower = table_name.lower()
+            
+            # For analytics platform, allow consolidated and analytics tables
+            if platform == 'analytics':
+                if ('consolidated' in table_lower or 
+                    'analytics' in table_lower or 
+                    'ga4' in table_lower or
+                    not any(pattern.lower() in table_lower for other_patterns in self.table_patterns.values() 
+                           if other_patterns != self.table_patterns['analytics'] for pattern in other_patterns)):
+                    filtered.append(table_info)
+                    logger.info(f"PLATFORM FILTER: {platform} - ALLOWED: {table_name}")
+                else:
+                    logger.info(f"PLATFORM FILTER: {platform} - REJECTED: {table_name}")
+            
+            # For specific platforms, only allow exact pattern matches
+            else:
+                if any(pattern.lower() in table_lower for pattern in allowed_patterns):
+                    filtered.append(table_info)
+                    logger.info(f"PLATFORM FILTER: {platform} - ALLOWED: {table_name}")
+                else:
+                    logger.info(f"PLATFORM FILTER: {platform} - REJECTED: {table_name}")
+        
+        logger.info(f"PLATFORM FILTERING: {platform} - {len(filtered)}/{len(tables)} tables passed filter")
+        return filtered
     
     async def _process_with_reliable_method(self, question: str) -> Dict[str, Any]:
         """Fallback to reliable v2.8.0 method with smart enhancements"""
@@ -1003,8 +1056,278 @@ Provide analysis:"""
             logger.error(f"Result formatting failed: {e}")
             return f"Retrieved {len(result['content'])} records from {table_name} ({platform.upper()}) for: {question}"
 
-# Initialize the integrated processor
-integrated_processor = IntegratedIntelligentProcessor()
+# MULTI-TABLE RELATIONSHIP DISCOVERY AND ANALYSIS
+class TableRelationshipMapper:
+    """Discovers and maps relationships between tables for complex queries"""
+    
+    def __init__(self):
+        self.known_relationships = {
+            # Store/Account relationships
+            'store_account': {
+                'join_columns': ['online_store', 'store_name', 'account_name'],
+                'tables': ['consolidated_master', 'gads_daily_campaign_performance_analytics', 
+                          'facebook_ads_daily_campaign_performance_analytics']
+            },
+            # Campaign relationships
+            'campaign_data': {
+                'join_columns': ['campaign_name', 'campaign_id'],
+                'tables': ['gads_daily_campaign_performance_analytics', 'facebook_ads_daily_campaign_performance_analytics']
+            },
+            # Date relationships
+            'temporal_joins': {
+                'join_columns': ['Date', 'date', 'order_date'],
+                'tables': 'all'  # Most tables have date columns
+            }
+        }
+    
+    def find_join_path(self, table1: str, table2: str) -> Dict[str, Any]:
+        """Find the best join path between two tables"""
+        join_options = []
+        
+        for relationship_type, config in self.known_relationships.items():
+            if (config['tables'] == 'all' or 
+                any(pattern in table1.lower() for pattern in config['tables']) and
+                any(pattern in table2.lower() for pattern in config['tables'])):
+                
+                for join_col in config['join_columns']:
+                    join_options.append({
+                        'join_type': relationship_type,
+                        'join_column': join_col,
+                        'confidence': self._calculate_join_confidence(table1, table2, join_col)
+                    })
+        
+        # Return best option
+        if join_options:
+            best_join = max(join_options, key=lambda x: x['confidence'])
+            return best_join
+        
+        return None
+    
+    def _calculate_join_confidence(self, table1: str, table2: str, join_column: str) -> float:
+        """Calculate confidence in a join relationship"""
+        confidence = 0.5  # Base confidence
+        
+        # Higher confidence for common patterns
+        if join_column in ['online_store', 'store_name']:
+            confidence += 0.3
+        if join_column in ['Date', 'date']:
+            confidence += 0.2
+        if 'campaign' in join_column and ('gads' in table1 or 'facebook' in table1):
+            confidence += 0.3
+            
+        return min(confidence, 1.0)
+
+class ComplexQueryProcessor:
+    """Handles multi-table queries and complex analysis"""
+    
+    def __init__(self):
+        self.relationship_mapper = TableRelationshipMapper()
+    
+    def detect_multi_table_need(self, question: str) -> bool:
+        """Detect if question requires multiple tables/platforms"""
+        question_lower = question.lower()
+        
+        multi_table_indicators = [
+            'vs', 'versus', 'compared to', 'compare', 'correlation', 'correlate',
+            'google ads and', 'facebook and', 'ga4 and', 'analytics and',
+            'cross-platform', 'combined view', 'overall view',
+            'along with', 'together with', 'relationship between',
+            'how does', 'impact of', 'effect on'
+        ]
+        
+        platform_combinations = [
+            ('google', 'facebook'), ('google', 'analytics'), ('facebook', 'analytics'),
+            ('ads', 'ga4'), ('campaigns', 'traffic'), ('spend', 'revenue')
+        ]
+        
+        # Check for explicit multi-table indicators
+        if any(indicator in question_lower for indicator in multi_table_indicators):
+            return True
+        
+        # Check for platform combinations
+        for platform1, platform2 in platform_combinations:
+            if platform1 in question_lower and platform2 in question_lower:
+                return True
+        
+        return False
+    
+    async def decompose_complex_query(self, question: str) -> Dict[str, Any]:
+        """Break down complex questions into analyzable components"""
+        question_lower = question.lower()
+        
+        # Identify platforms mentioned
+        platforms_mentioned = []
+        if any(kw in question_lower for kw in ['google ads', 'gads', 'adwords']):
+            platforms_mentioned.append('google_ads')
+        if any(kw in question_lower for kw in ['facebook', 'meta', 'instagram']):
+            platforms_mentioned.append('facebook_ads')
+        if any(kw in question_lower for kw in ['ga4', 'analytics', 'traffic']):
+            platforms_mentioned.append('analytics')
+        if any(kw in question_lower for kw in ['shipping', 'orders', 'shipstation']):
+            platforms_mentioned.append('shipstation')
+        
+        # If no specific platforms, assume comparison across major platforms
+        if not platforms_mentioned:
+            platforms_mentioned = ['google_ads', 'analytics']
+        
+        # Identify metrics requested
+        metrics_mentioned = []
+        metric_patterns = {
+            'roas': ['roas', 'return on ad spend', 'return on ads'],
+            'conversion_rate': ['conversion rate', 'conversions', 'conversion'],
+            'revenue': ['revenue', 'sales', 'income'],
+            'spend': ['spend', 'cost', 'budget'],
+            'clicks': ['clicks', 'click'],
+            'impressions': ['impressions', 'views']
+        }
+        
+        for metric, patterns in metric_patterns.items():
+            if any(pattern in question_lower for pattern in patterns):
+                metrics_mentioned.append(metric)
+        
+        return {
+            'original_question': question,
+            'platforms': platforms_mentioned,
+            'metrics': metrics_mentioned,
+            'analysis_type': 'comparison' if len(platforms_mentioned) > 1 else 'comprehensive',
+            'requires_joins': len(platforms_mentioned) > 1
+        }
+    
+    async def generate_multi_table_sql(self, query_plan: Dict) -> str:
+        """Generate SQL that combines multiple tables"""
+        platforms = query_plan['platforms']
+        metrics = query_plan['metrics']
+        
+        if len(platforms) == 1:
+            # Single platform, comprehensive view
+            return await self._generate_comprehensive_sql(platforms[0], metrics)
+        else:
+            # Multi-platform comparison
+            return await self._generate_comparison_sql(platforms, metrics)
+    
+    async def _generate_comprehensive_sql(self, platform: str, metrics: List[str]) -> str:
+        """Generate comprehensive SQL for single platform across multiple table types"""
+        
+        if platform == 'google_ads':
+            base_tables = {
+                'campaign': 'Analytics_Tables.gads_daily_campaign_performance_analytics',
+                'account': 'Analytics_Tables.gads_daily_account_performance_analytics',
+                'ad': 'Analytics_Tables.gads_daily_ad_performance_analytics'
+            }
+        elif platform == 'analytics':
+            return f"""
+            SELECT 
+                online_store,
+                DATE(Date) as date,
+                SUM(Revenue) as total_revenue,
+                SUM(Sessions) as total_sessions,
+                AVG(Conversion_rate) as avg_conversion_rate,
+                SUM(Users) as total_users
+            FROM `new_data_tables.consolidated_master`
+            WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+            GROUP BY online_store, DATE(Date)
+            ORDER BY date DESC, total_revenue DESC
+            LIMIT 100
+            """
+        
+        # Default fallback
+        return f"""
+        SELECT *
+        FROM `new_data_tables.consolidated_master`
+        WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        ORDER BY Date DESC
+        LIMIT 50
+        """
+    
+    async def _generate_comparison_sql(self, platforms: List[str], metrics: List[str]) -> str:
+        """Generate SQL comparing multiple platforms"""
+        
+        # Create CTEs for each platform
+        ctes = []
+        
+        if 'google_ads' in platforms:
+            ctes.append("""
+            google_ads_data AS (
+                SELECT 
+                    store_name as store,
+                    DATE(Date) as date,
+                    SUM(CAST(Cost AS FLOAT64)) as spend,
+                    SUM(CAST(Conversions AS FLOAT64)) as conversions,
+                    AVG(CAST(ROAS AS FLOAT64)) as roas,
+                    SUM(CAST(Clicks AS FLOAT64)) as clicks
+                FROM `Analytics_Tables.gads_daily_campaign_performance_analytics`
+                WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+                GROUP BY store_name, DATE(Date)
+            )""")
+        
+        if 'analytics' in platforms:
+            ctes.append("""
+            analytics_data AS (
+                SELECT 
+                    online_store as store,
+                    DATE(Date) as date,
+                    SUM(Revenue) as revenue,
+                    SUM(Sessions) as sessions,
+                    AVG(Conversion_rate) as conversion_rate,
+                    SUM(Users) as users
+                FROM `new_data_tables.consolidated_master`
+                WHERE Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+                GROUP BY online_store, DATE(Date)
+            )""")
+        
+        if 'facebook_ads' in platforms:
+            ctes.append("""
+            facebook_ads_data AS (
+                SELECT 
+                    online_store as store,
+                    DATE(date) as date,
+                    SUM(CAST(spend AS FLOAT64)) as fb_spend,
+                    SUM(CAST(conversions AS FLOAT64)) as fb_conversions,
+                    SUM(CAST(clicks AS FLOAT64)) as fb_clicks
+                FROM `Analytics_Tables.facebook_ads_daily_campaign_performance_analytics`
+                WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+                GROUP BY online_store, DATE(date)
+            )""")
+        
+        # Build final query
+        with_clause = "WITH " + ",\n".join(ctes)
+        
+        # Join all CTEs
+        if 'google_ads' in platforms and 'analytics' in platforms:
+            main_query = """
+            SELECT 
+                COALESCE(g.store, a.store) as store,
+                COALESCE(g.date, a.date) as date,
+                g.spend as google_spend,
+                g.roas as google_roas,
+                g.conversions as google_conversions,
+                a.revenue as total_revenue,
+                a.sessions as total_sessions,
+                a.conversion_rate as site_conversion_rate
+            FROM google_ads_data g
+            FULL OUTER JOIN analytics_data a ON g.store = a.store AND g.date = a.date
+            ORDER BY date DESC, total_revenue DESC
+            LIMIT 100
+            """
+        else:
+            # Single platform with comprehensive data
+            if 'analytics' in platforms:
+                main_query = """
+                SELECT * FROM analytics_data
+                ORDER BY date DESC, revenue DESC
+                LIMIT 100
+                """
+            else:
+                main_query = """
+                SELECT * FROM google_ads_data
+                ORDER BY date DESC, spend DESC
+                LIMIT 100
+                """
+        
+        return with_clause + "\n" + main_query
+
+# Initialize complex query processor
+complex_query_processor = ComplexQueryProcessor()
 
 # Replace the main SQL generation function (COMPLETE - from working version)
 async def generate_sql_with_ai_dynamic_enhanced(question: str, available_tables: Dict[str, Dict[str, List[str]]]) -> tuple:
@@ -1882,8 +2205,8 @@ async def unified_query(request: UnifiedQueryRequest):
     
     try:
         if request.data_source == "bigquery":
-            # Use enhanced integrated processing
-            result = await integrated_processor.process_query_with_intelligence(request.question)
+            # Use enhanced integrated processing with multi-table capabilities
+            result = await enhanced_integrated_processor.process_query_with_intelligence(request.question)
             
             # Format response according to style
             if request.preferred_style != "standard":
@@ -1893,9 +2216,9 @@ async def unified_query(request: UnifiedQueryRequest):
             
             return QueryResponse(
                 answer=result["answer"],
-                query_type=result.get("platform_detected", "unknown"),
+                query_type=result.get("analysis_type", result.get("platform_detected", "unknown")),
                 processing_method=result.get("processing_method", "unknown"),
-                sources_used=1 if result.get("data") else 0,
+                sources_used=len(result.get("platforms_analyzed", [])) if result.get("platforms_analyzed") else 1,
                 processing_time=result.get("processing_time", time.time() - start_time),
                 response_style=request.preferred_style
             )
@@ -1948,7 +2271,7 @@ async def simple_query(request: QueryRequest):
         keywords = ['data', 'table', 'campaign', 'performance', 'revenue', 'ads', 'shipping']
         
         if any(keyword in request.question.lower() for keyword in keywords):
-            result = await integrated_processor.process_query_with_intelligence(request.question)
+            result = await enhanced_integrated_processor.process_query_with_intelligence(request.question)
         else:
             # Use RAG for document-based questions
             rag_result = await simple_supabase_search(request.question)
@@ -2039,6 +2362,40 @@ async def test_bigquery_connection():
             "version": VERSION,
             "mcp_type": "enhanced" if ENHANCED_MCP_AVAILABLE else "basic"
         }
+
+@app.get("/api/bigquery/test-complex")
+async def test_complex_query_capabilities():
+    """Test endpoint for multi-table analysis capabilities"""
+    try:
+        test_queries = [
+            "Compare Google Ads ROAS with GA4 conversion rates",
+            "Show me Facebook and Google Ads performance side by side", 
+            "How does advertising spend correlate with website revenue?",
+            "Cross-platform performance analysis for BudgetMailbox"
+        ]
+        
+        results = {}
+        for query in test_queries:
+            is_complex = complex_query_processor.detect_multi_table_need(query)
+            if is_complex:
+                query_plan = await complex_query_processor.decompose_complex_query(query)
+                results[query] = {
+                    "is_complex": True,
+                    "platforms": query_plan.get('platforms', []),
+                    "analysis_type": query_plan.get('analysis_type'),
+                    "requires_joins": query_plan.get('requires_joins', False)
+                }
+            else:
+                results[query] = {"is_complex": False}
+        
+        return {
+            "test_results": results,
+            "complex_query_processor": "operational",
+            "multi_table_capabilities": "enabled"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "complex_capabilities": "failed"}
 
 if __name__ == "__main__":
     import uvicorn
